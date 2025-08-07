@@ -1,5 +1,6 @@
-import { Request, Response, NextFunction } from 'express'
-import { signupService, loginService } from '../services/authService'
+// src/controllers/authController.ts
+import { Request, Response, NextFunction } from "express";
+import { signupService, loginService } from "../services/authService";
 
 export async function signupController(
   req: Request,
@@ -7,11 +8,23 @@ export async function signupController(
   next: NextFunction
 ) {
   try {
-    const { email, password, role } = req.body
-    const user = await signupService(email, password, role)
-    res.status(201).json(user)
+    const { name, email, password, confirmPassword, country } = req.body;
+
+    // server‐side confirmPassword check
+    if (password !== confirmPassword) {
+      return res.status(400).json({ message: "Passwords do not match" });
+    }
+    if (!country) {
+      return res
+        .status(400)
+        .json({ message: "Country is required for signup" });
+    }
+
+    const user = await signupService(name, email, password, country);
+    // you can omit sending back the password
+    res.status(201).json(user);
   } catch (err) {
-    next(err)
+    next(err);
   }
 }
 
@@ -21,10 +34,11 @@ export async function loginController(
   next: NextFunction
 ) {
   try {
-    const { email, password } = req.body
-    const result = await loginService(email, password)
-    res.json(result)
+    const { email, password } = req.body;
+    const { token, user } = await loginService(email, password);
+    res.json({ token, user });
   } catch (err) {
-    next(err)
+    next(err);
   }
 }
+

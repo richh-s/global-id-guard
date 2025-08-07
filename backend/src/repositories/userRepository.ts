@@ -1,31 +1,38 @@
 // src/repositories/userRepository.ts
-import { query } from '../utils/db'
-import { User } from '../models/User'
+import { query } from "../utils/db";
 
-/**
- * Inserts a new user and returns the inserted row (minus password).
- */
-export async function createUser(
-  email: string,
-  hashed: string,
-  role: string
-): Promise<Pick<User, 'id' | 'email' | 'role'>> {
-  const rows = await query<User>(
-    'INSERT INTO users(email,password,role) VALUES($1,$2,$3) RETURNING id,email,role',
-    [email, hashed, role]
-  )
-  return rows[0]
+export interface UserRecord {
+  id: number;
+  email: string;
+  role: string;
+  name: string;
+  country: string;
 }
 
-/**
- * Finds a user by email, returning the full row including password.
- */
+export async function createUser(
+  name: string,
+  email: string,
+  password: string,
+  role: string,
+  country: string
+): Promise<UserRecord> {
+  const rows = await query<UserRecord>(
+    `INSERT INTO users (name, email, password, role, country)
+     VALUES ($1, $2, $3, $4, $5)
+     RETURNING id, email, role, name, country`,
+    [name, email, password, role, country]
+  );
+  return rows[0];
+}
+
 export async function findUserByEmail(
   email: string
-): Promise<User | null> {
-  const rows = await query<User>(
-    'SELECT * FROM users WHERE email = $1',
+): Promise<(UserRecord & { password: string }) | null> {
+  const rows = await query<UserRecord & { password: string }>(
+    `SELECT id, email, password, role, name, country
+     FROM users
+     WHERE email = $1`,
     [email]
-  )
-  return rows[0] ?? null
+  );
+  return rows[0] || null;
 }

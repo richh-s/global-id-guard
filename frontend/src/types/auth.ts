@@ -22,6 +22,7 @@ export interface LoginCredentials {
 export interface SignupCredentials {
   email: string;
   password: string;
+  confirmPassword: string 
   name: string;
   country: 'india' | 'australia' | 'uk';
 }

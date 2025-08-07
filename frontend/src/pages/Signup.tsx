@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -7,7 +7,8 @@ import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Shield, Mail, Lock, User, Globe, AlertCircle } from 'lucide-react';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Shield, Mail, Lock, User, Globe, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import { toast } from '@/hooks/use-toast';
 import verifyMeLogo from '@/assets/verifyme-logo.png';
 import heroBg from '@/assets/hero-bg.jpg';
@@ -22,9 +23,17 @@ export default function Signup() {
   });
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
-  
+  const [showPassword, setShowPassword] = useState(false);
+  const [showSuccessModal, setShowSuccessModal] = useState(false);
+
   const { signup } = useAuth();
   const navigate = useNavigate();
+
+  const validatePassword = (password: string) => {
+    const minLength = password.length >= 8;
+    const hasSpecialChar = /[!@#$%^&*(),.?":{}|<>]/.test(password);
+    return minLength && hasSpecialChar;
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -43,27 +52,41 @@ export default function Signup() {
       return;
     }
 
+    if (!validatePassword(formData.password)) {
+      setError('Password must be at least 8 characters long and contain at least one special character');
+      setIsLoading(false);
+      return;
+    }
+
     try {
       await signup({
         name: formData.name,
         email: formData.email,
         password: formData.password,
+        confirmPassword: formData.confirmPassword,
         country: formData.country,
       });
-      toast({
-        title: "Account created successfully!",
-        description: "Welcome to VerifyMe. You can now start verifying your identity.",
-      });
-      navigate('/dashboard');
-    } catch (err) {
-      setError('Failed to create account. Please try again.');
-    } finally {
+
+      setShowSuccessModal(true);
+    } catch (err: any) {
+      const message =
+        err.message === 'Email already in use'
+          ? 'Email already in use'
+          : err.message === 'Invalid signup data'
+          ? err.message
+          : 'Failed to create account. Please try again.';
+      setError(message);
       setIsLoading(false);
     }
   };
 
   const handleInputChange = (field: string, value: string) => {
     setFormData(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleModalClose = () => {
+    setShowSuccessModal(false);
+    navigate('/login');
   };
 
   return (
@@ -187,13 +210,20 @@ export default function Signup() {
                     <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="password"
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
                       placeholder="Create a password"
                       value={formData.password}
                       onChange={(e) => handleInputChange('password', e.target.value)}
-                      className="pl-10"
+                      className="pl-10 pr-10"
                       required
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-3 text-muted-foreground"
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
                   </div>
                 </div>
 
@@ -203,13 +233,20 @@ export default function Signup() {
                     <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="confirmPassword"
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
                       placeholder="Confirm your password"
                       value={formData.confirmPassword}
                       onChange={(e) => handleInputChange('confirmPassword', e.target.value)}
-                      className="pl-10"
+                      className="pl-10 pr-10"
                       required
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-3 text-muted-foreground"
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
                   </div>
                 </div>
 
@@ -235,6 +272,20 @@ export default function Signup() {
               </form>
             </CardContent>
           </Card>
+
+          <Dialog open={showSuccessModal} onOpenChange={handleModalClose}>
+            <DialogContent>
+              <DialogHeader>
+                <DialogTitle>Registration Successful!</DialogTitle>
+                <DialogDescription>
+                  Your account has been created successfully. You'll be redirected to the login page.
+                </DialogDescription>
+              </DialogHeader>
+              <Button onClick={handleModalClose} className="w-full">
+                Continue to Login
+              </Button>
+            </DialogContent>
+          </Dialog>
         </div>
       </div>
     </div>

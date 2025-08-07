@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import React, { useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/contexts/AuthContext';
 import { Button } from '@/components/ui/button';
@@ -6,37 +6,54 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertDescription } from '@/components/ui/alert';
-import { Shield, Mail, Lock, AlertCircle } from 'lucide-react';
+import { Shield, Mail, Lock, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { useFormik } from 'formik';
+import * as Yup from 'yup';
 import { toast } from '@/hooks/use-toast';
 import verifyMeLogo from '@/assets/verifyme-logo.png';
 import heroBg from '@/assets/hero-bg.jpg';
 
 export default function Login() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState('');
-  
+  const [showPassword, setShowPassword] = useState(false);
   const { login } = useAuth();
   const navigate = useNavigate();
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setIsLoading(true);
-    setError('');
+  const validationSchema = Yup.object({
+    email: Yup.string()
+      .email('Invalid email address')
+      .required('Email is required'),
+    password: Yup.string()
+      .required('Password is required'),
+  });
 
-    try {
-      await login({ email, password });
-      toast({
-        title: "Welcome back!",
-        description: "You have successfully logged in.",
-      });
-      navigate('/dashboard');
-    } catch (err) {
-      setError('Invalid email or password');
-    } finally {
-      setIsLoading(false);
-    }
+  const formik = useFormik({
+    initialValues: {
+      email: '',
+      password: '',
+    },
+    validationSchema,
+    onSubmit: async (values, { setSubmitting, setStatus }) => {
+      try {
+        await login({ email: values.email, password: values.password });
+        toast({
+          title: "Welcome back!",
+          description: "You have successfully logged in.",
+        });
+        navigate('/dashboard');
+      } catch (err: any) {
+        const message =
+          err.message === 'Invalid email or password'
+            ? 'Invalid email or password'
+            : 'Login failed. Please try again.';
+        setStatus({ error: message });
+        setSubmitting(false);
+      }
+    },
+  });
+
+  const handleDemoLogin = (demoEmail: string, demoPassword: string) => {
+    formik.setValues({ email: demoEmail, password: demoPassword });
+    formik.handleSubmit();
   };
 
   return (
@@ -97,11 +114,11 @@ export default function Login() {
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                {error && (
+              <form onSubmit={formik.handleSubmit} className="space-y-4">
+                {formik.status?.error && (
                   <Alert variant="destructive">
                     <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>{error}</AlertDescription>
+                    <AlertDescription>{formik.status.error}</AlertDescription>
                   </Alert>
                 )}
 
@@ -113,11 +130,12 @@ export default function Login() {
                       id="email"
                       type="email"
                       placeholder="Enter your email"
-                      value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="pl-10"
-                      required
+                      {...formik.getFieldProps('email')}
+                      className={`pl-10 ${formik.touched.email && formik.errors.email ? 'border-destructive' : ''}`}
                     />
+                    {formik.touched.email && formik.errors.email && (
+                      <div className="text-sm text-destructive">{formik.errors.email}</div>
+                    )}
                   </div>
                 </div>
 
@@ -127,14 +145,22 @@ export default function Login() {
                     <Lock className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                     <Input
                       id="password"
-                      type="password"
+                      type={showPassword ? 'text' : 'password'}
                       placeholder="Enter your password"
-                      value={password}
-                      onChange={(e) => setPassword(e.target.value)}
-                      className="pl-10"
-                      required
+                      {...formik.getFieldProps('password')}
+                      className={`pl-10 pr-10 ${formik.touched.password && formik.errors.password ? 'border-destructive' : ''}`}
                     />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-3 text-muted-foreground"
+                    >
+                      {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                    </button>
                   </div>
+                  {formik.touched.password && formik.errors.password && (
+                    <div className="text-sm text-destructive">{formik.errors.password}</div>
+                  )}
                 </div>
 
                 <div className="flex items-center justify-between">
@@ -149,11 +175,11 @@ export default function Login() {
                 <Button 
                   type="submit" 
                   className="w-full" 
-                  disabled={isLoading}
+                  disabled={formik.isSubmitting}
                   variant="hero"
                   size="lg"
                 >
-                  {isLoading ? 'Signing in...' : 'Sign in'}
+                  {formik.isSubmitting ? 'Signing in...' : 'Sign in'}
                 </Button>
 
                 <div className="relative">
@@ -170,10 +196,8 @@ export default function Login() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      setEmail('admin@verifyme.com');
-                      setPassword('password');
-                    }}
+                    disabled={formik.isSubmitting}
+                    onClick={() => handleDemoLogin('admin@verifyme.com', 'password')}
                   >
                     Admin Demo
                   </Button>
@@ -181,10 +205,8 @@ export default function Login() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      setEmail('inspector@verifyme.com');
-                      setPassword('password');
-                    }}
+                    disabled={formik.isSubmitting}
+                    onClick={() => handleDemoLogin('inspector@verifyme.com', 'password')}
                   >
                     Inspector Demo
                   </Button>
@@ -192,10 +214,8 @@ export default function Login() {
                     type="button"
                     variant="outline"
                     size="sm"
-                    onClick={() => {
-                      setEmail('user@verifyme.com');
-                      setPassword('password');
-                    }}
+                    disabled={formik.isSubmitting}
+                    onClick={() => handleDemoLogin('user@verifyme.com', 'password')}
                   >
                     User Demo
                   </Button>
