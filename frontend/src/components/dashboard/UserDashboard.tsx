@@ -1,79 +1,117 @@
-import { useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { VerificationStatusCard } from '@/components/verification/VerificationStatusCard';
-import { VerificationRequest } from '@/types/verification';
-import { 
-  Plus, 
-  Shield, 
-  CheckCircle, 
-  Clock, 
+// src/pages/dashboard/UserDashboard.tsx
+import { useEffect, useMemo, useState } from 'react'
+import axios from 'axios'
+import { Link } from 'react-router-dom'
+import { useAuth } from '@/contexts/AuthContext'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { VerificationStatusCard } from '@/components/verification/VerificationStatusCard'
+import type { VerificationRequest } from '@/types/verification'
+import {
+  Plus,
+  Shield,
+  CheckCircle,
+  Clock,
   XCircle,
-  TrendingUp,
   FileText,
-  AlertTriangle
-} from 'lucide-react';
-import { Link } from 'react-router-dom';
+  AlertTriangle,
+} from 'lucide-react'
 
-// Mock data
-const mockVerifications: VerificationRequest[] = [
-  {
-    id: '1',
-    userId: '3',
-    type: 'identity',
-    status: 'verified',
-    documents: [
-      {
-        id: '1',
-        type: 'passport',
-        filename: 'passport.jpg',
-        url: '/mock/passport.jpg',
-        uploadedAt: new Date().toISOString(),
-      }
-    ],
-    aiAnalysis: {
-      confidence: 0.94,
-      isValid: true,
-      extractedData: { name: 'Jane User', id: 'ABC123456' },
-      riskFactors: [],
-      analysisTime: new Date().toISOString(),
-    },
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    country: 'uk',
-  },
-  {
-    id: '2',
-    userId: '3',
-    type: 'address',
-    status: 'in_review',
-    documents: [
-      {
-        id: '2',
-        type: 'utility_bill',
-        filename: 'utility_bill.pdf',
-        url: '/mock/utility_bill.pdf',
-        uploadedAt: new Date().toISOString(),
-      }
-    ],
-    createdAt: new Date(Date.now() - 172800000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    country: 'uk',
-  },
-];
+// If you already have a central axios base (e.g. interceptors), you can switch to just axios.get('/api/dashboard').
+// Otherwise, set your base URL here:
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000'
+
+type DashboardApiResponse = {
+  totals?: {
+    total: number
+    verified: number
+    pending: number
+    rejected: number
+  }
+  // some earlier versions of our backend used these names
+  total?: number
+  verified?: number
+  in_review?: number
+  pending?: number
+  rejected?: number
+
+  recentVerifications?: VerificationRequest[]
+  recent?: VerificationRequest[] // tolerate alt key
+}
 
 export const UserDashboard = () => {
-  const { user } = useAuth();
-  const [verifications] = useState<VerificationRequest[]>(mockVerifications);
+  const { user } = useAuth()
 
-  const stats = {
-    total: verifications.length,
-    verified: verifications.filter(v => v.status === 'verified').length,
-    pending: verifications.filter(v => v.status === 'pending' || v.status === 'in_review').length,
-    rejected: verifications.filter(v => v.status === 'rejected').length,
-  };
+  const [isLoading, setIsLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [recent, setRecent] = useState<VerificationRequest[]>([])
+  const [counts, setCounts] = useState({
+    total: 0,
+    verified: 0,
+    pending: 0,
+    rejected: 0,
+  })
+
+  useEffect(() => {
+    let cancelled = false
+    const fetchDashboard = async () => {
+      setIsLoading(true)
+      setError(null)
+      try {
+        const token = localStorage.getItem('verifyme_token') || ''
+        const res = await axios.get<DashboardApiResponse>(`${API_BASE}/api/dashboard`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        if (cancelled) return
+
+        const data = res.data
+
+        // Normalize totals from possible shapes
+        const totals =
+          data.totals ??
+          {
+            total: data.total ?? 0,
+            verified: data.verified ?? 0,
+            pending: (data.pending ?? data.in_review) ?? 0,
+            rejected: data.rejected ?? 0,
+          }
+
+        setCounts({
+          total: totals.total ?? 0,
+          verified: totals.verified ?? 0,
+          pending: totals.pending ?? 0,
+          rejected: totals.rejected ?? 0,
+        })
+
+        setRecent(data.recentVerifications ?? data.recent ?? [])
+      } catch (err: any) {
+        setError(
+          err?.response?.data?.message ||
+            err?.message ||
+            'Failed to load your dashboard. Please try again.'
+        )
+      } finally {
+        if (!cancelled) setIsLoading(false)
+      }
+    }
+
+    fetchDashboard()
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  const stats = useMemo(
+    () => ({
+      total: counts.total,
+      verified: counts.verified,
+      pending: counts.pending,
+      rejected: counts.rejected,
+    }),
+    [counts]
+  )
 
   return (
     <div className="space-y-8">
@@ -90,6 +128,13 @@ export const UserDashboard = () => {
         </div>
       </div>
 
+      {/* Optional error banner */}
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
@@ -98,10 +143,8 @@ export const UserDashboard = () => {
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{stats.total}</div>
-            <p className="text-xs text-muted-foreground">
-              All time submissions
-            </p>
+            <div className="text-2xl font-bold">{isLoading ? '—' : stats.total}</div>
+            <p className="text-xs text-muted-foreground">All time submissions</p>
           </CardContent>
         </Card>
 
@@ -111,10 +154,8 @@ export const UserDashboard = () => {
             <CheckCircle className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-success">{stats.verified}</div>
-            <p className="text-xs text-muted-foreground">
-              Successfully verified
-            </p>
+            <div className="text-2xl font-bold text-success">{isLoading ? '—' : stats.verified}</div>
+            <p className="text-xs text-muted-foreground">Successfully verified</p>
           </CardContent>
         </Card>
 
@@ -124,10 +165,8 @@ export const UserDashboard = () => {
             <Clock className="h-4 w-4 text-warning" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-warning">{stats.pending}</div>
-            <p className="text-xs text-muted-foreground">
-              Awaiting verification
-            </p>
+            <div className="text-2xl font-bold text-warning">{isLoading ? '—' : stats.pending}</div>
+            <p className="text-xs text-muted-foreground">Awaiting verification</p>
           </CardContent>
         </Card>
 
@@ -137,10 +176,8 @@ export const UserDashboard = () => {
             <XCircle className="h-4 w-4 text-destructive" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-destructive">{stats.rejected}</div>
-            <p className="text-xs text-muted-foreground">
-              Require resubmission
-            </p>
+            <div className="text-2xl font-bold text-destructive">{isLoading ? '—' : stats.rejected}</div>
+            <p className="text-xs text-muted-foreground">Require resubmission</p>
           </CardContent>
         </Card>
       </div>
@@ -149,9 +186,7 @@ export const UserDashboard = () => {
       <Card>
         <CardHeader>
           <CardTitle>Quick Actions</CardTitle>
-          <CardDescription>
-            Start a new verification or manage existing ones
-          </CardDescription>
+          <CardDescription>Start a new verification or manage existing ones</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -162,7 +197,7 @@ export const UserDashboard = () => {
                 <span className="text-sm opacity-90">Upload documents for verification</span>
               </Link>
             </Button>
-            
+
             <Button asChild variant="outline" className="h-auto p-6 flex-col space-y-2">
               <Link to="/documents">
                 <FileText className="h-8 w-8" />
@@ -170,7 +205,7 @@ export const UserDashboard = () => {
                 <span className="text-sm opacity-70">View all uploaded documents</span>
               </Link>
             </Button>
-            
+
             <Button asChild variant="outline" className="h-auto p-6 flex-col space-y-2">
               <Link to="/profile">
                 <Shield className="h-8 w-8" />
@@ -191,9 +226,13 @@ export const UserDashboard = () => {
           </Button>
         </div>
 
-        {verifications.length > 0 ? (
+        {isLoading ? (
+          <Card>
+            <CardContent className="py-12 text-center text-muted-foreground">Loading…</CardContent>
+          </Card>
+        ) : recent.length > 0 ? (
           <div className="grid gap-6">
-            {verifications.map((verification) => (
+            {recent.map((verification) => (
               <VerificationStatusCard
                 key={verification.id}
                 verification={verification}
@@ -220,5 +259,5 @@ export const UserDashboard = () => {
         )}
       </div>
     </div>
-  );
-};
+  )
+}
