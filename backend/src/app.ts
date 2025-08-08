@@ -1,27 +1,34 @@
 // src/app.ts
-
 import express from 'express'
 import cors from 'cors'
-import { config } from './config'
+
 import authRoutes from './routes/authRoutes'
 import verifyRoutes from './routes/verifyRoutes'
-import verificationRequestsRoutes from './routes/verificationRequestRoutes'
+import verificationRequestsRoutes from './routes/verificationRequestRoutes' // ← note the plural
 import dashboardRoutes from './routes/dashboardRoutes'
 import auditLogRoutes from './routes/auditLogRoutes'
 import addressVerificationRoutes from './routes/addressVerificationRoutes'
 import fraudDetailsRoutes from './routes/fraudDetailsRoutes'
 import configRoutes from './routes/configRoutes'
 import { errorMiddleware } from './middlewares/errorMiddleware'
+import documentRoutes from './routes/documentRoutes'
+import { UPLOAD_DIR } from './config/uploads'
 
 const app = express()
 
-// Allow CORS from any origin (you can lock this down in production)
+// CORS (tighten in prod)
 app.use(cors())
 
-// Parse incoming JSON payloads
-app.use(express.json())
+// Body parsers (needed so req.body is not undefined)
+app.use(express.json({ limit: '5mb' }))              // JSON bodies
+app.use(express.urlencoded({ extended: true }))      // form-urlencoded bodies
 
-// Mount all API routes under /api
+// (Multipart/form-data is parsed per-route via multer)
+
+// Optional: quick health check
+app.get('/api/health', (_req, res) => res.json({ status: 'ok' }))
+
+// Routes
 app.use('/api/auth', authRoutes)
 app.use('/api/verify', verifyRoutes)
 app.use('/api/verification-requests', verificationRequestsRoutes)
@@ -30,8 +37,9 @@ app.use('/api/audit-logs', auditLogRoutes)
 app.use('/api/address-verify', addressVerificationRoutes)
 app.use('/api/fraud-details', fraudDetailsRoutes)
 app.use('/api/config', configRoutes)
-
-// Global error handler (must come after all routes)
+app.use('/api/documents', documentRoutes)
+app.use('/files', express.static(UPLOAD_DIR))
+// Global error handler (after routes)
 app.use(errorMiddleware)
 
 export default app

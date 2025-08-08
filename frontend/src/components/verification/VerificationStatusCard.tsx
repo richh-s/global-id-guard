@@ -56,7 +56,7 @@ const getStatusBadge = (status: VerificationRequest['status']) => {
         status === 'in_review' && 'border-primary text-primary'
       )}
     >
-      {status.replace('_', ' ').toUpperCase()}
+      {String(status).replace('_', ' ').toUpperCase()}
     </Badge>
   );
 };
@@ -81,6 +81,14 @@ export const VerificationStatusCard: React.FC<VerificationStatusCardProps> = ({
   const statusBadge = getStatusBadge(verification.status);
   const progressValue = getProgressValue(verification.status);
 
+  // --- NEW: safe locals / fallbacks ---
+  const docs = verification.documents ?? [];                 // always an array
+  const docCount = docs.length;                              // safe
+  const createdAt =
+    verification.createdAt ? new Date(verification.createdAt) : new Date();
+  const countryLabel = verification.country ?? '—';
+  const typeLabel = (verification.type ?? 'identity').toString();
+
   return (
     <Card className="hover:shadow-medium transition-all duration-300">
       <CardHeader className="pb-3">
@@ -89,11 +97,11 @@ export const VerificationStatusCard: React.FC<VerificationStatusCardProps> = ({
             {statusIcon}
             <div>
               <CardTitle className="text-lg capitalize flex items-center gap-2">
-                {verification.type} Verification
+                {typeLabel} Verification
                 <Shield className="h-4 w-4 text-primary" />
               </CardTitle>
               <CardDescription className="text-sm">
-                Submitted {new Date(verification.createdAt).toLocaleDateString()}
+                Submitted {createdAt.toLocaleDateString()}
               </CardDescription>
             </div>
           </div>
@@ -115,7 +123,7 @@ export const VerificationStatusCard: React.FC<VerificationStatusCardProps> = ({
             <div className="flex items-center justify-between text-sm">
               <span className="font-medium">AI Confidence</span>
               <span className="text-primary font-semibold">
-                {Math.round(verification.aiAnalysis.confidence * 100)}%
+                {Math.round((verification.aiAnalysis.confidence ?? 0) * 100)}%
               </span>
             </div>
           </div>
@@ -124,11 +132,9 @@ export const VerificationStatusCard: React.FC<VerificationStatusCardProps> = ({
         <div className="flex items-center justify-between text-sm text-muted-foreground">
           <div className="flex items-center gap-1">
             <FileText className="h-4 w-4" />
-            <span>{verification.documents.length} document(s)</span>
+            <span>{docCount} document(s)</span>
           </div>
-          <div className="capitalize">
-            Country: {verification.country}
-          </div>
+          <div className="capitalize">Country: {countryLabel}</div>
         </div>
 
         {verification.status === 'fraud_detected' && (

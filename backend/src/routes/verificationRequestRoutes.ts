@@ -9,10 +9,10 @@ import {
 
 const router = Router()
 
-// Only Inspectors (and Admins, if desired)
+// Only Inspectors (and Admins if you prefer: roleMiddleware('Inspector','Admin'))
 router.use(authMiddleware, roleMiddleware('Inspector'))
 
-// List pending requests
+// List requests waiting for review
 router.get('/', listPendingRequestsController)
 
 // Approve

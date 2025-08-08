@@ -7,7 +7,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { VerificationStatusCard } from '@/components/verification/VerificationStatusCard'
-import type { VerificationRequest } from '@/types/verification'
+import type { VerificationRequest as UiVerification } from '@/types/verification'
 import {
   Plus,
   Shield,
@@ -18,26 +18,89 @@ import {
   AlertTriangle,
 } from 'lucide-react'
 
-// If you already have a central axios base (e.g. interceptors), you can switch to just axios.get('/api/dashboard').
-// Otherwise, set your base URL here:
-const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000'
+// Axios base + token (do this once in your app bootstrap if you haven’t already)
+axios.defaults.baseURL = import.meta.env?.VITE_API_BASE || 'http://localhost:4000'
+axios.interceptors.request.use((cfg) => {
+  const t = localStorage.getItem('verifyme_token')
+  if (t) cfg.headers.Authorization = `Bearer ${t}`
+  return cfg
+})
+
+// ---- helpers to normalize backend rows to your UI types ----
+type Row = {
+  id: number
+  user_id: number
+  country_code: 'IN' | 'AU' | 'UK' | string
+  status: 'pending' | 'approved' | 'rejected' | string
+  ai_status?: 'not_started' | 'queued' | 'running' | 'completed'
+  ai_confidence?: number | null
+  ai_is_tampered?: boolean | null
+  verification_type?: 'identity' | 'address' | 'employment' | 'business' | string
+  document_type?: 'passport' | 'driving_license' | 'utility_bill' | string
+  file_name?: string | null
+  file_content_type?: string | null
+  file_storage_path?: string | null
+  created_at: string
+  updated_at?: string
+}
+
+function toUiStatus(row: Row): UiVerification['status'] {
+  if (row.status === 'approved') return 'verified'
+  if (row.status === 'rejected') return 'rejected'
+  return 'in_review'
+}
+function toUiCountry(cc: string | undefined): 'india' | 'australia' | 'uk' | undefined {
+  switch ((cc || '').toUpperCase()) {
+    case 'IN': return 'india'
+    case 'AU': return 'australia'
+    case 'UK': return 'uk'
+    default: return undefined
+  }
+}
+function toUiVerification(row: Row): UiVerification {
+  const docs: UiVerification['documents'] = row.file_name
+    ? [{
+        id: `${row.id}-0`,
+        type: (row.document_type as any) || 'passport',
+        filename: row.file_name || 'document',
+        url: undefined,
+        uploadedAt: row.created_at,
+      }]
+    : []
+
+  const aiAnalysis =
+    row.ai_status === 'completed' && typeof row.ai_confidence === 'number'
+      ? {
+          confidence: Math.max(0, Math.min(1, row.ai_confidence / 100)),
+          isValid: row.status === 'approved',
+          extractedData: undefined,
+          riskFactors: [],
+          analysisTime: row.updated_at || row.created_at,
+        }
+      : undefined
+
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    type: (row.verification_type as any) || 'identity',
+    status: toUiStatus(row),
+    documents: docs,
+    aiAnalysis,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at || row.created_at,
+    country: toUiCountry(row.country_code) || 'india',
+  }
+}
 
 type DashboardApiResponse = {
-  totals?: {
-    total: number
-    verified: number
-    pending: number
-    rejected: number
-  }
-  // some earlier versions of our backend used these names
+  totals?: { total: number; verified: number; pending: number; rejected: number }
   total?: number
   verified?: number
   in_review?: number
   pending?: number
   rejected?: number
-
-  recentVerifications?: VerificationRequest[]
-  recent?: VerificationRequest[] // tolerate alt key
+  recentVerifications?: UiVerification[]
+  recent?: UiVerification[]
 }
 
 export const UserDashboard = () => {
@@ -45,38 +108,39 @@ export const UserDashboard = () => {
 
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [recent, setRecent] = useState<VerificationRequest[]>([])
-  const [counts, setCounts] = useState({
-    total: 0,
-    verified: 0,
-    pending: 0,
-    rejected: 0,
-  })
+  const [recent, setRecent] = useState<UiVerification[]>([])
+  const [counts, setCounts] = useState({ total: 0, verified: 0, pending: 0, rejected: 0 })
 
   useEffect(() => {
     let cancelled = false
-    const fetchDashboard = async () => {
+    const run = async () => {
       setIsLoading(true)
       setError(null)
       try {
-        const token = localStorage.getItem('verifyme_token') || ''
-        const res = await axios.get<DashboardApiResponse>(`${API_BASE}/api/dashboard`, {
-          headers: { Authorization: `Bearer ${token}` },
-        })
+        const token = localStorage.getItem('verifyme_token')
+        if (!token) {
+          setIsLoading(false)
+          setRecent([])
+          setCounts({ total: 0, verified: 0, pending: 0, rejected: 0 })
+          return
+        }
+
+        const [dashRes, verifyRes] = await Promise.all([
+          axios.get<DashboardApiResponse>('/api/dashboard'),
+          axios.get<Row[]>('/api/verify'),
+        ])
 
         if (cancelled) return
 
-        const data = res.data
-
-        // Normalize totals from possible shapes
+        const d = dashRes.data ?? {}
         const totals =
-          data.totals ??
-          {
-            total: data.total ?? 0,
-            verified: data.verified ?? 0,
-            pending: (data.pending ?? data.in_review) ?? 0,
-            rejected: data.rejected ?? 0,
-          }
+          d.totals ??
+          ({
+            total: d.total ?? 0,
+            verified: d.verified ?? 0,
+            pending: (d.pending ?? d.in_review) ?? 0,
+            rejected: d.rejected ?? 0,
+          } as const)
 
         setCounts({
           total: totals.total ?? 0,
@@ -85,22 +149,19 @@ export const UserDashboard = () => {
           rejected: totals.rejected ?? 0,
         })
 
-        setRecent(data.recentVerifications ?? data.recent ?? [])
-      } catch (err: any) {
-        setError(
-          err?.response?.data?.message ||
-            err?.message ||
-            'Failed to load your dashboard. Please try again.'
-        )
+        const fromDashboard = d.recentVerifications ?? d.recent ?? []
+        const fromVerify = Array.isArray(verifyRes.data) ? verifyRes.data.map(toUiVerification) : []
+
+        setRecent(fromDashboard.length ? fromDashboard : fromVerify.slice(0, 5))
+      } catch (e: any) {
+        console.error('Dashboard load failed:', e)
+        setError(e?.response?.data?.message || e?.message || 'Failed to load your dashboard.')
       } finally {
         if (!cancelled) setIsLoading(false)
       }
     }
-
-    fetchDashboard()
-    return () => {
-      cancelled = true
-    }
+    run()
+    return () => { cancelled = true }
   }, [])
 
   const stats = useMemo(
@@ -111,6 +172,12 @@ export const UserDashboard = () => {
       rejected: counts.rejected,
     }),
     [counts]
+  )
+
+  // NEW: recent "in review" (pending) count for the middle card
+  const recentInReviewCount = useMemo(
+    () => recent.filter(v => v.status === 'in_review' || v.status === 'pending').length,
+    [recent]
   )
 
   return (
@@ -128,14 +195,13 @@ export const UserDashboard = () => {
         </div>
       </div>
 
-      {/* Optional error banner */}
       {error && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
       )}
 
-      {/* Stats Cards */}
+      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -159,14 +225,17 @@ export const UserDashboard = () => {
           </CardContent>
         </Card>
 
+        {/* UPDATED: show recent pending/in-review count instead of global */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">In Review</CardTitle>
             <Clock className="h-4 w-4 text-warning" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-warning">{isLoading ? '—' : stats.pending}</div>
-            <p className="text-xs text-muted-foreground">Awaiting verification</p>
+            <div className="text-2xl font-bold text-warning">
+              {isLoading ? '—' : recentInReviewCount}
+            </div>
+            <p className="text-xs text-muted-foreground">Recently submitted & awaiting verification</p>
           </CardContent>
         </Card>
 
@@ -186,7 +255,7 @@ export const UserDashboard = () => {
       <Card>
         <CardHeader>
           <CardTitle>Quick Actions</CardTitle>
-          <CardDescription>Start a new verification or manage existing ones</CardDescription>
+        <CardDescription>Start a new verification or manage existing ones</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -236,7 +305,7 @@ export const UserDashboard = () => {
               <VerificationStatusCard
                 key={verification.id}
                 verification={verification}
-                onViewDetails={() => console.log('View details:', verification.id)}
+                showDetails={false} // <-- hide "View Details" button
               />
             ))}
           </div>

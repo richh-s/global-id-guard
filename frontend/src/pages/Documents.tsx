@@ -1,65 +1,80 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { FileText, Download, Upload } from 'lucide-react'; // Import Upload icon
-import { VerificationRequest } from '@/types/verification';
-import { Link } from 'react-router-dom';
-import { Header } from '@/components/layout/Header'; // Import Header component
+// src/pages/documents/Documents.tsx
+import { useEffect, useState } from 'react'
+import axios from 'axios'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { FileText, Download, Upload } from 'lucide-react'
+import { Link } from 'react-router-dom'
+import { Header } from '@/components/layout/Header'
 
-// Mock data (same as UserDashboard for consistency)
-const mockVerifications: VerificationRequest[] = [
-  {
-    id: '1',
-    userId: '3',
-    type: 'identity',
-    status: 'verified',
-    documents: [
-      {
-        id: '1',
-        type: 'passport',
-        filename: 'passport.jpg',
-        url: '/mock/passport.jpg',
-        uploadedAt: new Date().toISOString(),
-      }
-    ],
-    aiAnalysis: {
-      confidence: 0.94,
-      isValid: true,
-      extractedData: { name: 'Jane User', id: 'ABC123456' },
-      riskFactors: [],
-      analysisTime: new Date().toISOString(),
-    },
-    createdAt: new Date(Date.now() - 86400000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    country: 'uk',
-  },
-  {
-    id: '2',
-    userId: '3',
-    type: 'address',
-    status: 'in_review',
-    documents: [
-      {
-        id: '2',
-        type: 'utility_bill',
-        filename: 'utility_bill.pdf',
-        url: '/mock/utility_bill.pdf',
-        uploadedAt: new Date().toISOString(),
-      }
-    ],
-    createdAt: new Date(Date.now() - 172800000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    country: 'uk',
-  },
-];
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000'
+
+type DocRow = {
+  id: number
+  verification_request_id: number
+  document_type?: 'passport' | 'driving_license' | 'utility_bill' | 'employment_letter' | string
+  file_name: string | null
+  file_content_type: string | null
+  file_storage_path: string | null
+  created_at: string
+}
+
+type UiDoc = {
+  id: string
+  type: string
+  filename: string
+  uploadedAt: string
+  downloadUrl: string
+}
 
 export const Documents = () => {
+  const [docs, setDocs] = useState<UiDoc[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const run = async () => {
+      setLoading(true)
+      setError(null)
+      try {
+        const token = localStorage.getItem('verifyme_token') || ''
+        const res = await axios.get<DocRow[]>(`${API_BASE}/api/documents`, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+
+        if (cancelled) return
+        const rows = Array.isArray(res.data) ? res.data : []
+
+        const mapped: UiDoc[] = rows
+          .filter(r => r.file_name) // only show rows that actually have a stored file
+          .map(r => ({
+            id: String(r.id),
+            type: r.document_type || 'document',
+            filename: r.file_name || 'document',
+            uploadedAt: r.created_at,
+            // backend download endpoint we added:
+            downloadUrl: `${API_BASE}/api/documents/${r.id}/download`,
+          }))
+
+        setDocs(mapped)
+      } catch (e: any) {
+        setError(e?.response?.data?.message || e?.message || 'Failed to load documents.')
+        setDocs([])
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    }
+    run()
+    return () => { cancelled = true }
+  }, [])
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <Header /> {/* Include the Header component */}
+      <Header />
       <main className="container mx-auto px-4 py-8">
         <div className="space-y-8">
           <div className="bg-gradient-primary rounded-lg p-6 text-white shadow-xl">
-            {/* Hero section with a gradient background */}
             <div className="flex items-center justify-between">
               <div>
                 <h1 className="text-3xl font-bold mb-2">My Documents</h1>
@@ -72,31 +87,30 @@ export const Documents = () => {
           </div>
 
           <Card className="shadow-lg">
-            {/* Card with a shadow */}
             <CardHeader>
               <CardTitle className="text-xl font-semibold">Uploaded Documents</CardTitle>
             </CardHeader>
             <CardContent>
-              {mockVerifications.length > 0 ? (
+              {loading ? (
+                <div className="py-12 text-center text-muted-foreground">Loading…</div>
+              ) : error ? (
+                <div className="py-12 text-center text-destructive">{error}</div>
+              ) : docs.length > 0 ? (
                 <div className="space-y-4">
-                  {mockVerifications.map((verification) => (
+                  {docs.map((doc) => (
                     <div
-                      key={verification.id}
+                      key={doc.id}
                       className="border rounded-lg p-4 flex items-center justify-between hover:bg-gray-50 transition-colors duration-200"
                     >
-                      {/* Document item with hover effect */}
                       <div className="space-y-1">
-                        <p className="font-medium capitalize">{verification.type} Document</p>
+                        <p className="font-medium capitalize">{doc.type} Document</p>
+                        <p className="text-sm text-gray-500 dark:text-gray-400">{doc.filename}</p>
                         <p className="text-sm text-gray-500 dark:text-gray-400">
-                          {verification.documents[0].filename}
-                        </p>
-                        <p className="text-sm text-gray-500 dark:text-gray-400">
-                          Uploaded:{' '}
-                          {new Date(verification.documents[0].uploadedAt).toLocaleDateString()}
+                          Uploaded: {new Date(doc.uploadedAt).toLocaleDateString()}
                         </p>
                       </div>
                       <Button variant="outline" asChild>
-                        <a href={verification.documents[0].url} download>
+                        <a href={doc.downloadUrl}>
                           <Download className="h-4 w-4 mr-2" />
                           Download
                         </a>
@@ -106,14 +120,12 @@ export const Documents = () => {
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center py-12">
-                  {/* Empty state */}
                   <FileText className="h-16 w-16 text-gray-400 dark:text-gray-500 mb-4" />
                   <h3 className="text-xl font-semibold mb-2">No documents uploaded</h3>
                   <p className="text-gray-500 dark:text-gray-400 text-center mb-6">
                     Upload your first document to start the verification process
                   </p>
                   <Button asChild variant="hero" className="bg-blue-600 hover:bg-blue-700 text-white">
-                    {/* Hero button with custom styling */}
                     <Link to="/verify" className="flex items-center">
                       <Upload className="h-4 w-4 mr-2" />
                       Upload Document
@@ -126,5 +138,7 @@ export const Documents = () => {
         </div>
       </main>
     </div>
-  );
-};
+  )
+}
+
+export default Documents

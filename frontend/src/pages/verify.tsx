@@ -1,32 +1,35 @@
-import { useState, useCallback } from 'react';
-import { useDropzone } from 'react-dropzone';
-import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
-import { Label } from '@/components/ui/label';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Upload, Shield } from 'lucide-react';
-import { VerificationRequest, Document } from '@/types/verification'; // Import Document type
-import { useToast } from '@/components/ui/use-toast';
-import { Header } from '@/components/layout/Header'; // Import Header component
+// src/pages/verify/Verify.tsx
+import { useState, useCallback } from 'react'
+import axios from 'axios'
+import { useDropzone } from 'react-dropzone'
+import { useAuth } from '@/contexts/AuthContext'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Upload, Shield } from 'lucide-react'
+import type { VerificationRequest, Document } from '@/types/verification'
+import { useToast } from '@/components/ui/use-toast'
+import { Header } from '@/components/layout/Header'
 
-type VerificationType = 'identity' | 'address' | 'employment' | 'business';
-type CountryType = 'india' | 'australia' | 'uk';
+type VerificationType = 'identity' | 'address' | 'employment' | 'business'
+type CountryCode = 'IN' | 'AU' | 'UK'
+
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:4000'
 
 export const Verify = () => {
-  const { user } = useAuth();
-  const { toast } = useToast();
-  const [verificationType, setVerificationType] = useState<VerificationType | ''>(''); // Use specific type
-  const [file, setFile] = useState<File | null>(null);
-  const [country, setCountry] = useState<CountryType | ''>(''); // Use specific type
-  const [documentType, setDocumentType] = useState<Document['type'] | ''>('');
+  const { user } = useAuth()
+  const { toast } = useToast()
 
-  const onDrop = useCallback((acceptedFiles: File[]) => {
-    if (acceptedFiles && acceptedFiles[0]) {
-      setFile(acceptedFiles[0]);
-    }
-  }, []);
+  const [verificationType, setVerificationType] = useState<VerificationType | ''>('')
+  const [file, setFile] = useState<File | null>(null)
+  const [country, setCountry] = useState<CountryCode | ''>('') // <-- ISO-2 codes
+  const [documentType, setDocumentType] = useState<Document['type'] | ''>('')
+  const [submitting, setSubmitting] = useState(false)
+
+  const onDrop = useCallback((accepted: File[]) => {
+    if (accepted?.[0]) setFile(accepted[0])
+  }, [])
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
     onDrop,
@@ -36,56 +39,65 @@ export const Verify = () => {
       'application/pdf': ['.pdf'],
     },
     multiple: false,
-  });
+  })
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
+    e.preventDefault()
+
     if (!verificationType || !file || !country || !documentType) {
       toast({
         variant: 'destructive',
-        title: 'Error',
-        description: 'Please fill in all required fields and upload a document.',
-      });
-      return;
+        title: 'Missing info',
+        description: 'Pick verification type, document type, country and a file.',
+      })
+      return
     }
 
-    // Mock API call
     try {
-      const mockResponse: VerificationRequest = {
-        id: Math.random().toString(36).substr(2, 9),
-        userId: user?.id || '',
-        type: verificationType,
-        status: 'in_review',
-        documents: [{
-          id: Math.random().toString(36).substr(2, 9),
-          type: documentType,
-          filename: file.name,
-          url: URL.createObjectURL(file),
-          uploadedAt: new Date().toISOString(),
-        }],
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        country: country,
-      };
+      setSubmitting(true)
+      const token = localStorage.getItem('verifyme_token') || ''
 
-      toast({
-        title: 'Success',
-        description: 'Verification request submitted successfully!',
-      });
+      let res
+      if (verificationType === 'address') {
+        // Address → /api/address-verify (expects "photo")
+        const fd = new FormData()
+        fd.append('photo', file)
+        fd.append('country', country)            // <-- already ISO-2
+        fd.append('documentType', documentType)  // harmless if backend ignores for address
+        res = await axios.post(`${API_BASE}/api/address-verify`, fd, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      } else {
+        // Identity/Employment/Business → /api/verify (expects "file" + verificationType)
+        const fd = new FormData()
+        fd.append('file', file)
+        fd.append('country', country)            // <-- already ISO-2
+        fd.append('documentType', documentType)
+        fd.append('verificationType', verificationType)
+        res = await axios.post(`${API_BASE}/api/verify`, fd, {
+          headers: { Authorization: `Bearer ${token}` },
+        })
+      }
 
-      // Reset form
-      setVerificationType('');
-      setFile(null);
-      setCountry('');
-      setDocumentType('');
-    } catch (error) {
+      const created: Partial<VerificationRequest> = res.data
       toast({
-        variant: 'destructive',
-        title: 'Error',
-        description: 'Failed to submit verification request.',
-      });
+        title: 'Submitted!',
+        description: created?.id ? `Request #${created.id} created.` : 'Verification request submitted.',
+      })
+
+      // reset
+      setVerificationType('')
+      setCountry('')
+      setDocumentType('')
+      setFile(null)
+    } catch (err: any) {
+      const message =
+        err?.response?.data?.message || err?.message || 'Failed to submit verification request.'
+      toast({ variant: 'destructive', title: 'Error', description: message })
+    } finally {
+      setSubmitting(false)
     }
-  };
+  }
 
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -115,7 +127,10 @@ export const Verify = () => {
               <form onSubmit={handleSubmit} className="space-y-6">
                 <div className="space-y-2">
                   <Label htmlFor="verificationType">Verification Type</Label>
-                  <Select value={verificationType} onValueChange={(value) => setVerificationType(value as VerificationType)}>
+                  <Select
+                    value={verificationType}
+                    onValueChange={(v) => setVerificationType(v as VerificationType)}
+                  >
                     <SelectTrigger id="verificationType">
                       <SelectValue placeholder="Select verification type" />
                     </SelectTrigger>
@@ -130,13 +145,16 @@ export const Verify = () => {
 
                 <div className="space-y-2">
                   <Label htmlFor="documentType">Document Type</Label>
-                  <Select value={documentType} onValueChange={(value) => setDocumentType(value as Document['type'])}>
+                  <Select
+                    value={documentType}
+                    onValueChange={(v) => setDocumentType(v as Document['type'])}
+                  >
                     <SelectTrigger id="documentType">
                       <SelectValue placeholder="Select document type" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="passport">Passport</SelectItem>
-                      <SelectItem value="aadhaar">Aadhaar</SelectItem>
+                      {/* Aadhaar removed */}
                       <SelectItem value="driving_license">Driving License</SelectItem>
                       <SelectItem value="utility_bill">Utility Bill</SelectItem>
                       <SelectItem value="employment_letter">Employment Letter</SelectItem>
@@ -146,40 +164,45 @@ export const Verify = () => {
 
                 <div className="space-y-2">
                   <Label htmlFor="country">Country</Label>
-                  <Select value={country} onValueChange={(value) => setCountry(value as CountryType)}>
+                  <Select value={country} onValueChange={(v) => setCountry(v as CountryCode)}>
                     <SelectTrigger id="country">
                       <SelectValue placeholder="Select your country" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="uk">United Kingdom</SelectItem>
-                      <SelectItem value="australia">Australia</SelectItem>
-                      <SelectItem value="india">India</SelectItem>
+                      <SelectItem value="UK">United Kingdom</SelectItem>
+                      <SelectItem value="AU">Australia</SelectItem>
+                      <SelectItem value="IN">India</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
 
                 <div className="space-y-2">
                   <Label htmlFor="document">Upload Document</Label>
-                  <div {...getRootProps()} className={`dropzone ${isDragActive ? 'active' : ''} border-2 border-dashed rounded-md p-4 text-center cursor-pointer`}>
+                  <div
+                    {...getRootProps()}
+                    className={`border-2 border-dashed rounded-md p-4 text-center cursor-pointer ${
+                      isDragActive ? 'border-primary/70' : 'border-muted'
+                    }`}
+                  >
                     <input {...getInputProps()} id="document" />
                     {isDragActive ? (
-                      <p className="text-sm text-muted-foreground">Drop the files here ...</p>
+                      <p className="text-sm text-muted-foreground">Drop the file here…</p>
                     ) : (
                       <p className="text-sm text-muted-foreground">
-                        Drag 'n' drop some files here, or click to select files
+                        Drag & drop a file here, or click to select
                       </p>
                     )}
                   </div>
                   {file && (
-                    <p className="text-sm text-muted-foreground">
-                      Selected file: {file.name}
+                    <p className="text-sm text-muted-foreground mt-1">
+                      Selected file: <span className="font-medium">{file.name}</span>
                     </p>
                   )}
                 </div>
 
-                <Button type="submit" variant="hero" className="w-full">
+                <Button type="submit" variant="hero" className="w-full" disabled={submitting}>
                   <Upload className="h-4 w-4 mr-2" />
-                  Submit Verification
+                  {submitting ? 'Submitting…' : 'Submit Verification'}
                 </Button>
               </form>
             </CardContent>
@@ -187,5 +210,7 @@ export const Verify = () => {
         </div>
       </main>
     </div>
-  );
-};
+  )
+}
+
+export default Verify
