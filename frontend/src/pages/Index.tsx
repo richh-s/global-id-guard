@@ -150,11 +150,7 @@ const Index = () => {
                 VerifyMe
               </span>
             </div>
-            <div className="flex space-x-6 text-sm text-muted-foreground">
-              <Link to="/privacy" className="hover:text-primary transition-colors">Privacy</Link>
-              <Link to="/terms" className="hover:text-primary transition-colors">Terms</Link>
-              <Link to="/support" className="hover:text-primary transition-colors">Support</Link>
-            </div>
+          
           </div>
         </div>
       </footer>

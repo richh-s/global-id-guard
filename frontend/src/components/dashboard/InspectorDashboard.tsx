@@ -14,6 +14,8 @@ import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
 } from '@/components/ui/dialog'
 import { Textarea } from '@/components/ui/textarea'
+import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
 
 // ---------- Axios base + auth header ----------
 axios.defaults.baseURL = import.meta.env?.VITE_API_BASE || 'http://localhost:4000'
@@ -27,9 +29,10 @@ if (!(axios as any)[AXIOS_AUTH_INTERCEPTOR]) {
   ;(axios as any)[AXIOS_AUTH_INTERCEPTOR] = true
 }
 
-// Optional: allow overriding the public files base
+// Optional envs
 const PUBLIC_FILE_BASE =
   (import.meta.env as any)?.VITE_PUBLIC_FILE_BASE || `${axios.defaults.baseURL}/files`
+const FRAUD_MODE = (import.meta.env as any)?.VITE_FRAUD_MODE // e.g. "mock"
 
 // ---------- Types from backend ----------
 type Row = {
@@ -44,7 +47,7 @@ type Row = {
   file_name?: string | null
   file_content_type?: string | null
   file_storage_path?: string | null
-  file_url?: string | null           // <- controller now returns this
+  file_url?: string | null
   created_at: string
 }
 
@@ -58,7 +61,29 @@ type UiVerification = {
   aiConfidence?: number
   fileName?: string | null
   fileType?: string | null
-  previewUrl?: string | null         // URL to fetch (server or /files/<name>)
+  previewUrl?: string | null
+  fraud?: FraudSummary | null // filled after a scan
+}
+
+// Fraud API (matches your screenshot)
+type FraudScanMode = 'mock' | 'live'
+type Verdict = 'valid' | 'invalid'
+type FraudResponse = {
+  requestId: number
+  verdict: Verdict
+  confidence: number // 0..100
+  isTampered: boolean
+  mode: FraudScanMode
+  signals?: Record<string, number | boolean>
+  scannedAt: string
+}
+type FraudSummary = {
+  verdict: Verdict
+  confidence: number // 0..100
+  isTampered: boolean
+  signals: Record<string, number | boolean>
+  scannedAt: string
+  mode: FraudScanMode
 }
 
 function basename(path?: string | null) {
@@ -77,7 +102,6 @@ function buildPreviewUrl(r: Row): string | null {
   const name = basename(r.file_storage_path)
   return name ? `${PUBLIC_FILE_BASE}/${name}` : null
 }
-
 function toUi(row: Row): UiVerification {
   const status: UiVerification['status'] =
     row.status === 'approved' ? 'verified'
@@ -100,6 +124,7 @@ function toUi(row: Row): UiVerification {
     fileName: row.file_name ?? null,
     fileType: row.file_content_type ?? null,
     previewUrl: buildPreviewUrl(row),
+    fraud: null,
   }
 }
 
@@ -135,6 +160,12 @@ export const InspectorDashboard = () => {
   const [resultOpen, setResultOpen] = useState(false)
   const [resultTitle, setResultTitle] = useState('')
   const [resultDesc, setResultDesc] = useState('')
+
+  // Fraud modal
+  const [fraudOpen, setFraudOpen] = useState(false)
+  const [fraudLoading, setFraudLoading] = useState(false)
+  const [fraudError, setFraudError] = useState<string | null>(null)
+  const [fraudData, setFraudData] = useState<FraudResponse | null>(null)
 
   const fetchPending = async () => {
     setLoading(true)
@@ -209,7 +240,6 @@ export const InspectorDashboard = () => {
   const handlePreview = async (item: UiVerification) => {
     setPreviewItem(item)
     setPreviewOpen(true)
-    // clear previous preview url
     if (objectUrl) {
       URL.revokeObjectURL(objectUrl)
       setObjectUrl(null)
@@ -220,14 +250,57 @@ export const InspectorDashboard = () => {
       const url = URL.createObjectURL(res.data)
       setObjectUrl(url)
     } catch (e) {
-      // keep modal open; UI will show "No preview available"
       console.warn('Preview fetch failed:', e)
+    }
+  }
+
+  // ---- Fraud Scan flow ----
+  const runFraudScan = async (id: string) => {
+    setFraudError(null)
+    setFraudLoading(true)
+    setFraudData(null)
+    setFraudOpen(true)
+    try {
+      const q = FRAUD_MODE ? `?mode=${encodeURIComponent(FRAUD_MODE)}` : ''
+      const res = await axios.get<FraudResponse>(`/api/fraud-detection/${id}${q}`)
+      setFraudData(res.data)
+
+      // Persist a compact summary back on the row so we can show inline badge
+      setRows(prev =>
+        prev.map(r =>
+          r.id === id
+            ? {
+                ...r,
+                fraud: {
+                  verdict: res.data.verdict,
+                  confidence: res.data.confidence,
+                  isTampered: res.data.isTampered,
+                  signals: res.data.signals || {},
+                  scannedAt: res.data.scannedAt,
+                  mode: res.data.mode,
+                },
+              }
+            : r
+        )
+      )
+    } catch (e: any) {
+      setFraudError(e?.response?.data?.message || e?.message || 'Fraud scan failed.')
+    } finally {
+      setFraudLoading(false)
     }
   }
 
   const stats = {
     assigned: rows.length,
     completedToday,
+  }
+
+  const verdictBadge = (fraud?: FraudSummary | null) => {
+    if (!fraud) return null
+    const color =
+      fraud.verdict === 'valid' && !fraud.isTampered ? 'bg-success text-white' : 'bg-destructive text-white'
+    const label = fraud.verdict.toUpperCase()
+    return <Badge className={color}>{label}</Badge>
   }
 
   return (
@@ -309,6 +382,7 @@ export const InspectorDashboard = () => {
                     <th className="py-2 pr-4">Type</th>
                     <th className="py-2 pr-4">Country</th>
                     <th className="py-2 pr-4">AI Confidence</th>
+                    <th className="py-2 pr-4">Fraud AI</th>
                     <th className="py-2 pr-4">Submitted</th>
                     <th className="py-2 pr-4">Actions</th>
                   </tr>
@@ -319,6 +393,7 @@ export const InspectorDashboard = () => {
                       <td className="py-2 pr-4 font-mono">{v.id}</td>
                       <td className="py-2 pr-4 capitalize">{v.type}</td>
                       <td className="py-2 pr-4 capitalize">{v.country}</td>
+
                       <td className="py-2 pr-4">
                         {typeof v.aiConfidence === 'number' ? (
                           <span
@@ -337,9 +412,25 @@ export const InspectorDashboard = () => {
                           <span className="text-muted-foreground">Pending</span>
                         )}
                       </td>
+
+                      {/* Fraud column: inline badge if scanned */}
+                      <td className="py-2 pr-4">
+                        {v.fraud ? (
+                          <div className="flex items-center gap-2">
+                            {verdictBadge(v.fraud)}
+                            <span className="text-xs text-muted-foreground">
+                              {v.fraud.confidence}% • {v.fraud.isTampered ? 'Tampered' : 'Clean'}
+                            </span>
+                          </div>
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </td>
+
                       <td className="py-2 pr-4">
                         {new Date(v.createdAt).toLocaleDateString()}
                       </td>
+
                       <td className="py-2 pr-4">
                         <div className="flex gap-2">
                           <Button
@@ -351,6 +442,16 @@ export const InspectorDashboard = () => {
                           >
                             <Eye className="h-4 w-4" />
                           </Button>
+
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            title="Fraud Scan"
+                            onClick={() => runFraudScan(v.id)}
+                          >
+                            <Shield className="h-4 w-4" />
+                          </Button>
+
                           <Button size="sm" onClick={() => openDecision(v.id, 'approve')} title="Approve">
                             <CheckCircle className="h-4 w-4" />
                           </Button>
@@ -368,50 +469,47 @@ export const InspectorDashboard = () => {
         </CardContent>
       </Card>
 
-      {/* Preview Modal */}
-  {/* Preview Modal (scrollable) */}
-<Dialog open={previewOpen} onOpenChange={(open) => {
-  if (!open && objectUrl) { URL.revokeObjectURL(objectUrl); setObjectUrl(null) }
-  setPreviewOpen(open)
-}}>
-  <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden">
-    <DialogHeader>
-      <DialogTitle>Document Preview</DialogTitle>
-      <DialogDescription>
-        {previewItem?.fileName || 'Uploaded document'}
-      </DialogDescription>
-    </DialogHeader>
+      {/* Preview Modal (scrollable) */}
+      <Dialog open={previewOpen} onOpenChange={(open) => {
+        if (!open && objectUrl) { URL.revokeObjectURL(objectUrl); setObjectUrl(null) }
+        setPreviewOpen(open)
+      }}>
+        <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden">
+          <DialogHeader>
+            <DialogTitle>Document Preview</DialogTitle>
+            <DialogDescription>
+              {previewItem?.fileName || 'Uploaded document'}
+            </DialogDescription>
+          </DialogHeader>
 
-    {/* Scrollable viewport */}
-    <div className="relative max-h-[70vh] overflow-auto rounded-md border bg-muted/20 p-2">
-      {(objectUrl || previewItem?.previewUrl) ? (
-        previewItem?.fileType?.startsWith('image/') ? (
-          <img
-            src={objectUrl || previewItem!.previewUrl!}
-            alt={previewItem?.fileName || 'document'}
-            className="max-w-full h-auto block"
-          />
-        ) : previewItem?.fileType === 'application/pdf' ? (
-          <iframe
-            src={objectUrl || previewItem!.previewUrl!}
-            title="PDF preview"
-            className="w-full h-[70vh] rounded-md"
-          />
-        ) : (
-          <div className="text-sm">
-            Preview not supported for this file type.{' '}
-            <a className="underline" href={objectUrl || previewItem!.previewUrl!} target="_blank" rel="noreferrer">
-              Download
-            </a>
+          <div className="relative max-h-[70vh] overflow-auto rounded-md border bg-muted/20 p-2">
+            {(objectUrl || previewItem?.previewUrl) ? (
+              previewItem?.fileType?.startsWith('image/') ? (
+                <img
+                  src={objectUrl || previewItem!.previewUrl!}
+                  alt={previewItem?.fileName || 'document'}
+                  className="max-w-full h-auto block"
+                />
+              ) : previewItem?.fileType === 'application/pdf' ? (
+                <iframe
+                  src={objectUrl || previewItem!.previewUrl!}
+                  title="PDF preview"
+                  className="w-full h-[70vh] rounded-md"
+                />
+              ) : (
+                <div className="text-sm">
+                  Preview not supported for this file type.{' '}
+                  <a className="underline" href={objectUrl || previewItem!.previewUrl!} target="_blank" rel="noreferrer">
+                    Download
+                  </a>
+                </div>
+              )
+            ) : (
+              <div className="text-muted-foreground text-sm">No preview available.</div>
+            )}
           </div>
-        )
-      ) : (
-        <div className="text-muted-foreground text-sm">No preview available.</div>
-      )}
-    </div>
-  </DialogContent>
-</Dialog>
-
+        </DialogContent>
+      </Dialog>
 
       {/* Decision Modal */}
       <Dialog open={decisionOpen} onOpenChange={setDecisionOpen}>
@@ -448,6 +546,71 @@ export const InspectorDashboard = () => {
           </DialogHeader>
           <DialogFooter>
             <Button onClick={() => setResultOpen(false)}>OK</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Fraud Result Modal */}
+      <Dialog open={fraudOpen} onOpenChange={setFraudOpen}>
+        <DialogContent className="max-w-xl">
+          <DialogHeader>
+            <DialogTitle>Fraud Detection</DialogTitle>
+            <DialogDescription>
+              AI analysis {FRAUD_MODE ? `(mode: ${FRAUD_MODE})` : null}
+            </DialogDescription>
+          </DialogHeader>
+
+          {fraudLoading ? (
+            <div className="py-8 text-center text-muted-foreground">Scanning…</div>
+          ) : fraudError ? (
+            <div className="py-4 text-destructive">{fraudError}</div>
+          ) : fraudData ? (
+            <div className="space-y-4">
+              <div className="flex items-center gap-3">
+                <Badge className={
+                  fraudData.verdict === 'valid' && !fraudData.isTampered
+                    ? 'bg-success text-white'
+                    : 'bg-destructive text-white'
+                }>
+                  {fraudData.verdict.toUpperCase()}
+                </Badge>
+                <span className="text-sm text-muted-foreground">
+                  {fraudData.isTampered ? 'Tampered detected' : 'No tampering detected'}
+                </span>
+              </div>
+
+              <div>
+                <div className="flex justify-between text-sm mb-1">
+                  <span className="font-medium">Confidence</span>
+                  <span className="font-medium">{fraudData.confidence}%</span>
+                </div>
+                <Progress value={fraudData.confidence} />
+              </div>
+
+              {fraudData.signals && (
+                <div className="rounded-md border p-3">
+                  <div className="text-sm font-semibold mb-2">Signals</div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+                    {Object.entries(fraudData.signals).map(([k, v]) => (
+                      <div key={k} className="flex justify-between">
+                        <span className="text-muted-foreground">{k}</span>
+                        <span className="font-medium">{String(v)}</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              <div className="text-xs text-muted-foreground">
+                Scanned at: {new Date(fraudData.scannedAt).toLocaleString()}
+              </div>
+            </div>
+          ) : (
+            <div className="text-muted-foreground">No data.</div>
+          )}
+
+          <DialogFooter>
+            <Button onClick={() => setFraudOpen(false)}>Close</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

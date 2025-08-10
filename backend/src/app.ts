@@ -8,12 +8,13 @@ import verificationRequestsRoutes from './routes/verificationRequestRoutes' // â
 import dashboardRoutes from './routes/dashboardRoutes'
 import auditLogRoutes from './routes/auditLogRoutes'
 import addressVerificationRoutes from './routes/addressVerificationRoutes'
-import fraudDetailsRoutes from './routes/fraudDetailsRoutes'
+
 import configRoutes from './routes/configRoutes'
 import { errorMiddleware } from './middlewares/errorMiddleware'
 import documentRoutes from './routes/documentRoutes'
 import { UPLOAD_DIR } from './config/uploads'
 import metricsRoutes from './routes/metricsRoutes'
+import fraudDetectionRoutes from './routes/fraudDetectionRoutes'
 
 const app = express()
 
@@ -36,7 +37,7 @@ app.use('/api/verification-requests', verificationRequestsRoutes)
 app.use('/api/dashboard', dashboardRoutes)
 app.use('/api/audit-logs', auditLogRoutes)
 app.use('/api/address-verify', addressVerificationRoutes)
-app.use('/api/fraud-details', fraudDetailsRoutes)
+app.use('/api/fraud-detection', fraudDetectionRoutes);
 app.use('/api/config', configRoutes)
 app.use('/api/documents', documentRoutes)
 app.use('/files', express.static(UPLOAD_DIR))
