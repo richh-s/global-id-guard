@@ -49,7 +49,15 @@ export default function Login() {
 
   const handleDemoLogin = (email: string, password: string) => {
     formik.setValues({ email, password });
-    formik.handleSubmit();
+    // Manually trigger validation after setting values
+    formik.validateForm().then(() => {
+      if (Object.keys(formik.errors).length === 0) {
+        formik.handleSubmit();
+      } else {
+        // Optionally, display an error message if validation fails
+        console.log("Validation failed before demo login:", formik.errors);
+      }
+    });
   };
 
   return (
@@ -192,15 +200,6 @@ export default function Login() {
                     onClick={() => handleDemoLogin('inspector@verifyme.com', 'password')}
                   >
                     Inspector Demo
-                  </Button>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    disabled={formik.isSubmitting}
-                    onClick={() => handleDemoLogin('user@verifyme.com', 'password')}
-                  >
-                    User Demo
                   </Button>
                 </div>
 
