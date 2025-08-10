@@ -3,31 +3,33 @@ import { useEffect, useMemo, useState } from 'react'
 import axios from 'axios'
 import { useAuth } from '@/contexts/AuthContext'
 import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
+  Card, CardContent, CardDescription, CardHeader, CardTitle,
 } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import {
-  Shield,
-  Eye,
-  CheckCircle,
-  XCircle,
-  FileText,
-  Filter,
-  Search,
-} from 'lucide-react'
 import { Input } from '@/components/ui/input'
+import {
+  Shield, Eye, CheckCircle, XCircle, FileText, Filter, Search,
+} from 'lucide-react'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter,
+} from '@/components/ui/dialog'
+import { Textarea } from '@/components/ui/textarea'
 
 // ---------- Axios base + auth header ----------
 axios.defaults.baseURL = import.meta.env?.VITE_API_BASE || 'http://localhost:4000'
-axios.interceptors.request.use((cfg) => {
-  const t = localStorage.getItem('verifyme_token')
-  if (t) cfg.headers.Authorization = `Bearer ${t}`
-  return cfg
-})
+const AXIOS_AUTH_INTERCEPTOR = '__verifyme_auth_installed__'
+if (!(axios as any)[AXIOS_AUTH_INTERCEPTOR]) {
+  axios.interceptors.request.use((cfg) => {
+    const t = localStorage.getItem('verifyme_token')
+    if (t) cfg.headers.Authorization = `Bearer ${t}`
+    return cfg
+  })
+  ;(axios as any)[AXIOS_AUTH_INTERCEPTOR] = true
+}
+
+// Optional: allow overriding the public files base
+const PUBLIC_FILE_BASE =
+  (import.meta.env as any)?.VITE_PUBLIC_FILE_BASE || `${axios.defaults.baseURL}/files`
 
 // ---------- Types from backend ----------
 type Row = {
@@ -40,6 +42,9 @@ type Row = {
   verification_type?: 'identity' | 'address' | 'employment' | 'business' | string
   document_type?: 'passport' | 'driving_license' | 'utility_bill' | 'employment_letter' | string
   file_name?: string | null
+  file_content_type?: string | null
+  file_storage_path?: string | null
+  file_url?: string | null           // <- controller now returns this
   created_at: string
 }
 
@@ -51,27 +56,33 @@ type UiVerification = {
   country: 'india' | 'australia' | 'uk'
   createdAt: string
   aiConfidence?: number
+  fileName?: string | null
+  fileType?: string | null
+  previewUrl?: string | null         // URL to fetch (server or /files/<name>)
 }
 
-// ---------- helpers ----------
+function basename(path?: string | null) {
+  if (!path) return null
+  try { return path.split(/[\\/]/).pop() || null } catch { return null }
+}
 function toUiCountry(cc: string | undefined): 'india' | 'australia' | 'uk' {
   switch ((cc || '').toUpperCase()) {
-    case 'AU':
-      return 'australia'
-    case 'UK':
-      return 'uk'
-    default:
-      return 'india'
+    case 'AU': return 'australia'
+    case 'UK': return 'uk'
+    default:   return 'india'
   }
+}
+function buildPreviewUrl(r: Row): string | null {
+  if (r.file_url) return r.file_url
+  const name = basename(r.file_storage_path)
+  return name ? `${PUBLIC_FILE_BASE}/${name}` : null
 }
 
 function toUi(row: Row): UiVerification {
   const status: UiVerification['status'] =
-    row.status === 'approved'
-      ? 'verified'
-      : row.status === 'rejected'
-      ? 'rejected'
-      : 'in_review' // treat 'pending' as in_review in UI
+    row.status === 'approved' ? 'verified'
+    : row.status === 'rejected' ? 'rejected'
+    : 'in_review'
 
   const aiConfidence =
     row.ai_status === 'completed' && typeof row.ai_confidence === 'number'
@@ -86,6 +97,9 @@ function toUi(row: Row): UiVerification {
     country: toUiCountry(row.country_code),
     createdAt: row.created_at,
     aiConfidence,
+    fileName: row.file_name ?? null,
+    fileType: row.file_content_type ?? null,
+    previewUrl: buildPreviewUrl(row),
   }
 }
 
@@ -98,11 +112,34 @@ export const InspectorDashboard = () => {
   const [error, setError] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
 
+  // Completed Today — client-side for instant feedback
+  const [completedToday, setCompletedToday] = useState(0)
+
+  // Preview modal
+  const [previewOpen, setPreviewOpen] = useState(false)
+  const [previewItem, setPreviewItem] = useState<UiVerification | null>(null)
+
+  // We fetch the file as a blob and create a safe object URL for preview
+  const [objectUrl, setObjectUrl] = useState<string | null>(null)
+  useEffect(() => {
+    return () => { if (objectUrl) URL.revokeObjectURL(objectUrl) }
+  }, [objectUrl, previewOpen])
+
+  // Decision modal
+  const [decisionOpen, setDecisionOpen] = useState(false)
+  const [decisionType, setDecisionType] = useState<'approve' | 'reject' | null>(null)
+  const [decisionTargetId, setDecisionTargetId] = useState<string | null>(null)
+  const [decisionReason, setDecisionReason] = useState('')
+
+  // Result modal
+  const [resultOpen, setResultOpen] = useState(false)
+  const [resultTitle, setResultTitle] = useState('')
+  const [resultDesc, setResultDesc] = useState('')
+
   const fetchPending = async () => {
     setLoading(true)
     setError(null)
     try {
-      // Inspector-only endpoint (from your Postman run)
       const res = await axios.get<Row[]>('/api/verification-requests')
       setRows((res.data || []).map(toUi))
     } catch (e: any) {
@@ -127,41 +164,70 @@ export const InspectorDashboard = () => {
     )
   }, [rows, searchTerm])
 
-  // ---- Approve/Reject handlers ----
-  const handleApprove = async (id: string) => {
-    // If your backend accepts approve without a reason, you can remove this prompt.
-    const reason = window.prompt('Enter approval reason (required):') || ''
-    if (!reason.trim()) {
-      alert('Approval reason is required.')
+  const openDecision = (id: string, type: 'approve' | 'reject') => {
+    setDecisionTargetId(id)
+    setDecisionType(type)
+    setDecisionReason('')
+    setDecisionOpen(true)
+  }
+
+  const submitDecision = async () => {
+    if (!decisionTargetId || !decisionType) return
+    const reason = decisionReason.trim()
+    if (!reason) {
+      setResultTitle('Reason required')
+      setResultDesc('Please provide a reason before proceeding.')
+      setResultOpen(true)
       return
     }
+
     try {
-      await axios.put(`/api/verification-requests/${id}/approve`, { reason })
-      // Remove from list (no longer pending)
-      setRows((prev) => prev.filter((r) => r.id !== id))
+      if (decisionType === 'approve') {
+        await axios.put(`/api/verification-requests/${decisionTargetId}/approve`, { reason })
+      } else {
+        await axios.put(`/api/verification-requests/${decisionTargetId}/reject`, { reason })
+      }
+
+      setRows((prev) => prev.filter((r) => r.id !== decisionTargetId))
+      setCompletedToday((n) => n + 1)
+
+      setResultTitle('Success')
+      setResultDesc(decisionType === 'approve'
+        ? 'The request has been approved.'
+        : 'The request has been rejected.')
+      setResultOpen(true)
     } catch (e: any) {
-      alert(e?.response?.data?.message || e?.message || 'Approve failed')
+      setResultTitle('Action failed')
+      setResultDesc(e?.response?.data?.message || e?.message || 'Please try again.')
+      setResultOpen(true)
+    } finally {
+      setDecisionOpen(false)
     }
   }
 
-  const handleReject = async (id: string) => {
-    const reason = window.prompt('Enter rejection reason (required):') || ''
-    if (!reason.trim()) {
-      alert('Rejection reason is required.')
-      return
+  // ---- Preview handler: fetch as blob, create object URL ----
+  const handlePreview = async (item: UiVerification) => {
+    setPreviewItem(item)
+    setPreviewOpen(true)
+    // clear previous preview url
+    if (objectUrl) {
+      URL.revokeObjectURL(objectUrl)
+      setObjectUrl(null)
     }
+    if (!item.previewUrl) return
     try {
-      await axios.put(`/api/verification-requests/${id}/reject`, { reason })
-      setRows((prev) => prev.filter((r) => r.id !== id))
-    } catch (e: any) {
-      alert(e?.response?.data?.message || e?.message || 'Reject failed')
+      const res = await axios.get(item.previewUrl, { responseType: 'blob' })
+      const url = URL.createObjectURL(res.data)
+      setObjectUrl(url)
+    } catch (e) {
+      // keep modal open; UI will show "No preview available"
+      console.warn('Preview fetch failed:', e)
     }
   }
 
-  // Simple inspector stats derived from list
   const stats = {
     assigned: rows.length,
-    completedToday: '—', // keep placeholder unless you add a backend metric
+    completedToday,
   }
 
   return (
@@ -177,7 +243,7 @@ export const InspectorDashboard = () => {
         </div>
       </div>
 
-      {/* Stats (removed Avg. Review Time & Accuracy Rate) */}
+      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -196,7 +262,7 @@ export const InspectorDashboard = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold">{stats.completedToday}</div>
-            <p className="text-xs text-muted-foreground">—</p>
+            <p className="text-xs text-muted-foreground">Approvals + rejections</p>
           </CardContent>
         </Card>
       </div>
@@ -219,9 +285,9 @@ export const InspectorDashboard = () => {
                   className="pl-10 w-64"
                 />
               </div>
-              <Button variant="outline" size="sm">
+              <Button variant="outline" size="sm" onClick={fetchPending}>
                 <Filter className="h-4 w-4 mr-2" />
-                Filter
+                Refresh
               </Button>
             </div>
           </div>
@@ -276,18 +342,19 @@ export const InspectorDashboard = () => {
                       </td>
                       <td className="py-2 pr-4">
                         <div className="flex gap-2">
-                          <Button variant="outline" size="sm" title="View">
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            title="Preview"
+                            onClick={() => handlePreview(v)}
+                            disabled={!v.previewUrl}
+                          >
                             <Eye className="h-4 w-4" />
                           </Button>
-                          <Button size="sm" onClick={() => handleApprove(v.id)} title="Approve">
+                          <Button size="sm" onClick={() => openDecision(v.id, 'approve')} title="Approve">
                             <CheckCircle className="h-4 w-4" />
                           </Button>
-                          <Button
-                            variant="destructive"
-                            size="sm"
-                            onClick={() => handleReject(v.id)}
-                            title="Reject"
-                          >
+                          <Button variant="destructive" size="sm" onClick={() => openDecision(v.id, 'reject')} title="Reject">
                             <XCircle className="h-4 w-4" />
                           </Button>
                         </div>
@@ -300,6 +367,85 @@ export const InspectorDashboard = () => {
           )}
         </CardContent>
       </Card>
+
+      {/* Preview Modal */}
+      <Dialog open={previewOpen} onOpenChange={(open) => {
+        if (!open && objectUrl) { URL.revokeObjectURL(objectUrl); setObjectUrl(null) }
+        setPreviewOpen(open)
+      }}>
+        <DialogContent className="max-w-3xl">
+          <DialogHeader>
+            <DialogTitle>Document Preview</DialogTitle>
+            <DialogDescription>
+              {previewItem?.fileName || 'Uploaded document'}
+            </DialogDescription>
+          </DialogHeader>
+
+          {(objectUrl || previewItem?.previewUrl) ? (
+            previewItem?.fileType?.startsWith('image/') ? (
+              <img
+                src={objectUrl || previewItem!.previewUrl!}
+                alt={previewItem?.fileName || 'document'}
+                className="w-full h-auto rounded-md"
+              />
+            ) : previewItem?.fileType === 'application/pdf' ? (
+              <iframe
+                src={objectUrl || previewItem!.previewUrl!}
+                title="PDF preview"
+                className="w-full h-[70vh] rounded-md"
+              />
+            ) : (
+              <div className="text-sm">
+                Preview not supported for this file type.{' '}
+                <a className="underline" href={objectUrl || previewItem!.previewUrl!} target="_blank" rel="noreferrer">
+                  Download
+                </a>
+              </div>
+            )
+          ) : (
+            <div className="text-muted-foreground text-sm">No preview available.</div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      {/* Decision Modal */}
+      <Dialog open={decisionOpen} onOpenChange={setDecisionOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>
+              {decisionType === 'approve' ? 'Approve Verification' : 'Reject Verification'}
+            </DialogTitle>
+            <DialogDescription>
+              Please provide a brief reason. This is saved to the audit log and shared with the user.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={decisionReason}
+            onChange={(e) => setDecisionReason(e.target.value)}
+            placeholder={decisionType === 'approve' ? 'Reason for approval' : 'Reason for rejection'}
+            className="min-h-[100px]"
+          />
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setDecisionOpen(false)}>Cancel</Button>
+            <Button onClick={submitDecision}>
+              {decisionType === 'approve' ? 'Approve' : 'Reject'}
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Result Modal */}
+      <Dialog open={resultOpen} onOpenChange={setResultOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>{resultTitle}</DialogTitle>
+            <DialogDescription>{resultDesc}</DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button onClick={() => setResultOpen(false)}>OK</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
