@@ -1,5 +1,5 @@
 // src/repositories/userRepository.ts
-import { query } from "../utils/db";
+import { query } from "../config/database";
 
 export interface UserRecord {
   id: number;

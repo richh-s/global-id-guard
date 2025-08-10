@@ -1,15 +1,15 @@
-// src/middlewares/roleMiddleware.ts
 import { Request, Response, NextFunction, RequestHandler } from 'express'
 
 /**
- * Creates middleware that allows only specific roles to proceed.
- * @param allowedRoles One or more roles permitted for this route.
+ * Allows only specific roles. Case-insensitive.
  */
-export const roleMiddleware = (...allowedRoles: string[]): RequestHandler => {
-  return (req: Request, res: Response, next: NextFunction) => {
-    // `req.user` is injected by authMiddleware and is optional on Request
-    const userRole = req.user?.role
-    if (!userRole || !allowedRoles.includes(userRole)) {
+export const roleMiddleware = (...allowed: string[]): RequestHandler => {
+  // Pre-normalize the allowed list once
+  const allowedLower = allowed.map((r) => String(r).toLowerCase())
+
+  return (req: any, res: Response, next: NextFunction) => {
+    const role = String(req.user?.role || '').toLowerCase()
+    if (!role || !allowedLower.includes(role)) {
       return res.status(403).json({ message: 'Forbidden: insufficient role' })
     }
     next()

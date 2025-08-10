@@ -1,5 +1,5 @@
 // src/services/authService.ts
-import bcrypt from "bcryptjs";
+import bcrypt from "bcrypt"; // use same library as seeder for consistency
 import jwt from "jsonwebtoken";
 import { config } from "../config";
 import { createUser, findUserByEmail, UserRecord } from "../repositories/userRepository";
@@ -21,8 +21,13 @@ export async function signupService(
     (err as any).statusCode = 409;
     throw err;
   }
+
   const hashed = await bcrypt.hash(password, 10);
-  return createUser(name, email, hashed, "User", country);
+
+  // Always use lowercase role for consistency
+  const role = "user";
+
+  return createUser(name, email, hashed, role, country);
 }
 
 export async function loginService(
@@ -35,6 +40,7 @@ export async function loginService(
     (err as any).statusCode = 401;
     throw err;
   }
+
   const match = await bcrypt.compare(password, user.password);
   if (!match) {
     const err = new Error("Invalid credentials");

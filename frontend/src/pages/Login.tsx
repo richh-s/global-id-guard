@@ -19,47 +19,43 @@ export default function Login() {
   const navigate = useNavigate();
 
   const validationSchema = Yup.object({
-    email: Yup.string()
-      .email('Invalid email address')
-      .required('Email is required'),
-    password: Yup.string()
-      .required('Password is required'),
+    email: Yup.string().email('Invalid email address').required('Email is required'),
+    password: Yup.string().required('Password is required'),
   });
 
   const formik = useFormik({
-    initialValues: {
-      email: '',
-      password: '',
-    },
+    initialValues: { email: '', password: '' },
     validationSchema,
     onSubmit: async (values, { setSubmitting, setStatus }) => {
       try {
+        // Uses real backend JWT via AuthContext.login
         await login({ email: values.email, password: values.password });
-        toast({
-          title: "Welcome back!",
-          description: "You have successfully logged in.",
-        });
+
+        toast({ title: 'Welcome back!', description: 'You have successfully logged in.' });
+
+        // Always go to /dashboard; that page chooses Admin/Inspector/User view by role
         navigate('/dashboard');
       } catch (err: any) {
         const message =
-          err.message === 'Invalid email or password'
+          err?.message === 'Invalid email or password'
             ? 'Invalid email or password'
-            : 'Login failed. Please try again.';
+            : err?.response?.data?.message || 'Login failed. Please try again.';
         setStatus({ error: message });
+      } finally {
         setSubmitting(false);
       }
     },
   });
 
-  const handleDemoLogin = (demoEmail: string, demoPassword: string) => {
-    formik.setValues({ email: demoEmail, password: demoPassword });
+  const handleDemoLogin = (email: string, password: string) => {
+    formik.setValues({ email, password });
     formik.handleSubmit();
   };
 
   return (
     <div className="min-h-screen flex">
       {/* Left side - Hero */}
-      <div 
+      <div
         className="hidden lg:flex lg:w-1/2 bg-gradient-hero relative overflow-hidden"
         style={{ backgroundImage: `url(${heroBg})`, backgroundSize: 'cover', backgroundPosition: 'center' }}
       >
@@ -70,9 +66,7 @@ export default function Login() {
               <img src={verifyMeLogo} alt="VerifyMe" className="h-12 w-12" />
               <span className="text-3xl font-bold">VerifyMe</span>
             </div>
-            <h1 className="text-4xl font-bold mb-6">
-              Secure Identity Verification Platform
-            </h1>
+            <h1 className="text-4xl font-bold mb-6">Secure Identity Verification Platform</h1>
             <p className="text-xl opacity-90 mb-8">
               Advanced AI-powered verification with global compliance and fraud detection capabilities.
             </p>
@@ -109,9 +103,7 @@ export default function Login() {
           <Card className="shadow-strong">
             <CardHeader className="text-center">
               <CardTitle className="text-2xl">Welcome back</CardTitle>
-              <CardDescription>
-                Sign in to your VerifyMe account to continue
-              </CardDescription>
+              <CardDescription>Sign in to your VerifyMe account to continue</CardDescription>
             </CardHeader>
             <CardContent>
               <form onSubmit={formik.handleSubmit} className="space-y-4">
@@ -164,21 +156,12 @@ export default function Login() {
                 </div>
 
                 <div className="flex items-center justify-between">
-                  <Link 
-                    to="/forgot-password" 
-                    className="text-sm text-primary hover:underline"
-                  >
+                  <Link to="/forgot-password" className="text-sm text-primary hover:underline">
                     Forgot password?
                   </Link>
                 </div>
 
-                <Button 
-                  type="submit" 
-                  className="w-full" 
-                  disabled={formik.isSubmitting}
-                  variant="hero"
-                  size="lg"
-                >
+                <Button type="submit" className="w-full" disabled={formik.isSubmitting} variant="hero" size="lg">
                   {formik.isSubmitting ? 'Signing in...' : 'Sign in'}
                 </Button>
 
@@ -223,10 +206,7 @@ export default function Login() {
 
                 <div className="text-center text-sm">
                   <span className="text-muted-foreground">Don't have an account? </span>
-                  <Link 
-                    to="/signup" 
-                    className="text-primary hover:underline font-medium"
-                  >
+                  <Link to="/signup" className="text-primary hover:underline font-medium">
                     Sign up
                   </Link>
                 </div>

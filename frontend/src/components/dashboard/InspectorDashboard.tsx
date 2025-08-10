@@ -1,165 +1,181 @@
-import { useState } from 'react';
-import { useAuth } from '@/contexts/AuthContext';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { VerificationStatusCard } from '@/components/verification/VerificationStatusCard';
-import { VerificationRequest } from '@/types/verification';
-import { 
-  Shield, 
-  Eye, 
-  CheckCircle, 
+// src/pages/inspector/InspectorDashboard.tsx
+import { useEffect, useMemo, useState } from 'react'
+import axios from 'axios'
+import { useAuth } from '@/contexts/AuthContext'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
+import {
+  Shield,
+  Eye,
+  CheckCircle,
   XCircle,
   Clock,
-  AlertTriangle,
   TrendingUp,
   FileText,
   Filter,
-  Search
-} from 'lucide-react';
-import { Input } from '@/components/ui/input';
+  Search,
+} from 'lucide-react'
+import { Input } from '@/components/ui/input'
 
-// Mock data for inspector
-const mockPendingVerifications: VerificationRequest[] = [
-  {
-    id: '3',
-    userId: '4',
-    type: 'identity',
-    status: 'in_review',
-    documents: [
-      {
-        id: '3',
-        type: 'aadhaar',
-        filename: 'aadhaar_card.jpg',
-        url: '/mock/aadhaar.jpg',
-        uploadedAt: new Date().toISOString(),
-        fraudCheck: {
-          isSuspicious: false,
-          tamperedRegions: [],
-          riskScore: 0.15,
-        }
-      }
-    ],
-    aiAnalysis: {
-      confidence: 0.87,
-      isValid: true,
-      extractedData: { name: 'Rajesh Kumar', id: '1234567890' },
-      riskFactors: ['Low image quality'],
-      analysisTime: new Date().toISOString(),
-    },
-    createdAt: new Date(Date.now() - 7200000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    country: 'india',
-  },
-  {
-    id: '4',
-    userId: '5',
-    type: 'address',
-    status: 'pending',
-    documents: [
-      {
-        id: '4',
-        type: 'utility_bill',
-        filename: 'electricity_bill.pdf',
-        url: '/mock/bill.pdf',
-        uploadedAt: new Date().toISOString(),
-        fraudCheck: {
-          isSuspicious: true,
-          tamperedRegions: [
-            { x: 100, y: 150, width: 200, height: 50, confidence: 0.92 }
-          ],
-          riskScore: 0.78,
-          fraudType: 'document_tamper'
-        }
-      }
-    ],
-    createdAt: new Date(Date.now() - 14400000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    country: 'australia',
-  },
-  {
-    id: '5',
-    userId: '6',
-    type: 'employment',
-    status: 'in_review',
-    documents: [
-      {
-        id: '5',
-        type: 'employment_letter',
-        filename: 'employment_verification.pdf',
-        url: '/mock/employment.pdf',
-        uploadedAt: new Date().toISOString(),
-      }
-    ],
-    aiAnalysis: {
-      confidence: 0.91,
-      isValid: true,
-      extractedData: { company: 'Tech Corp Ltd', position: 'Software Engineer' },
-      riskFactors: [],
-      analysisTime: new Date().toISOString(),
-    },
-    createdAt: new Date(Date.now() - 21600000).toISOString(),
-    updatedAt: new Date().toISOString(),
-    country: 'uk',
-  },
-];
+// ----------------- Axios base + auth header -----------------
+axios.defaults.baseURL = import.meta.env?.VITE_API_BASE || 'http://localhost:4000'
+axios.interceptors.request.use((cfg) => {
+  const t = localStorage.getItem('verifyme_token')
+  if (t) cfg.headers.Authorization = `Bearer ${t}`
+  return cfg
+})
 
-const mockStats = {
-  assigned: 15,
-  completed: 143,
-  averageTime: '45 minutes',
-  accuracyRate: 97.8,
-};
+// ----------------- Backend row + mapping to UI -----------------
+type Row = {
+  id: number
+  user_id: number
+  country_code: 'IN' | 'AU' | 'UK' | string
+  status: 'pending' | 'approved' | 'rejected' | string
+  ai_status?: 'not_started' | 'queued' | 'running' | 'completed' | null
+  ai_confidence?: number | null // 0..100 when completed
+  verification_type?: 'identity' | 'address' | 'employment' | 'business' | string
+  document_type?: 'passport' | 'driving_license' | 'utility_bill' | 'employment_letter' | string
+  file_name?: string | null
+  created_at: string
+}
 
+type UiVerification = {
+  id: string
+  userId: string
+  type: 'identity' | 'address' | 'employment' | 'business' | string
+  status: 'pending' | 'in_review' | 'verified' | 'rejected'
+  country: 'india' | 'australia' | 'uk'
+  createdAt: string
+  aiConfidence?: number // 0..1 (optional)
+}
+
+function toUiCountry(cc: string | undefined): 'india' | 'australia' | 'uk' {
+  switch ((cc || '').toUpperCase()) {
+    case 'AU':
+      return 'australia'
+    case 'UK':
+      return 'uk'
+    default:
+      return 'india'
+  }
+}
+
+function toUi(row: Row): UiVerification {
+  const status: UiVerification['status'] =
+    row.status === 'approved'
+      ? 'verified'
+      : row.status === 'rejected'
+      ? 'rejected'
+      : 'in_review' // treat 'pending' as in_review in UI
+
+  const aiConfidence =
+    row.ai_status === 'completed' && typeof row.ai_confidence === 'number'
+      ? Math.max(0, Math.min(1, row.ai_confidence / 100))
+      : undefined
+
+  return {
+    id: String(row.id),
+    userId: String(row.user_id),
+    type: (row.verification_type as any) || 'identity',
+    status,
+    country: toUiCountry(row.country_code),
+    createdAt: row.created_at,
+    aiConfidence,
+  }
+}
+
+// ----------------- Component -----------------
 export const InspectorDashboard = () => {
-  const { user } = useAuth();
-  const [pendingVerifications] = useState<VerificationRequest[]>(mockPendingVerifications);
-  const [searchTerm, setSearchTerm] = useState('');
+  const { user } = useAuth()
 
-  const filteredVerifications = pendingVerifications.filter(v => 
-    v.id.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    v.type.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    v.country.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  const [rows, setRows] = useState<UiVerification[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [searchTerm, setSearchTerm] = useState('')
 
-  const handleApprove = (id: string) => {
-    console.log('Approving verification:', id);
-    // Implement approval logic
-  };
-
-  const handleReject = (id: string) => {
-    console.log('Rejecting verification:', id);
-    // Implement rejection logic
-  };
-
-  const getPriorityBadge = (verification: VerificationRequest) => {
-    const fraudCheck = verification.documents[0]?.fraudCheck;
-    if (fraudCheck?.isSuspicious) {
-      return <Badge variant="destructive">High Priority</Badge>;
+  const fetchPending = async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await axios.get<Row[]>('/api/verification-requests') // Inspector-only
+      setRows((res.data || []).map(toUi))
+    } catch (e: any) {
+      setError(e?.response?.data?.message || e?.message || 'Failed to load pending requests.')
+    } finally {
+      setLoading(false)
     }
-    if (verification.aiAnalysis && verification.aiAnalysis.confidence < 0.8) {
-      return <Badge className="bg-warning text-warning-foreground hover:bg-warning/80">Medium Priority</Badge>;
+  }
+
+  useEffect(() => {
+    fetchPending()
+  }, [])
+
+  const filtered = useMemo(() => {
+    const q = searchTerm.trim().toLowerCase()
+    if (!q) return rows
+    return rows.filter(
+      (v) =>
+        v.id.toLowerCase().includes(q) ||
+        v.type.toLowerCase().includes(q) ||
+        v.country.toLowerCase().includes(q),
+    )
+  }, [rows, searchTerm])
+
+  // ---- Approve/Reject handlers ----
+  const handleApprove = async (id: string) => {
+    const optionalReason = window.prompt('Approve reason (optional):') || undefined
+    try {
+      await axios.put(`/api/verification-requests/${id}/approve`, { reason: optionalReason })
+      // Remove from list (it’s no longer pending)
+      setRows((prev) => prev.filter((r) => r.id !== id))
+    } catch (e: any) {
+      alert(e?.response?.data?.message || e?.message || 'Approve failed')
     }
-    return <Badge variant="outline">Normal</Badge>;
-  };
+  }
+
+  const handleReject = async (id: string) => {
+    const reason = window.prompt('Enter rejection reason (required):') || ''
+    if (!reason.trim()) {
+      alert('Rejection reason is required.')
+      return
+    }
+    try {
+      await axios.put(`/api/verification-requests/${id}/reject`, { reason })
+      setRows((prev) => prev.filter((r) => r.id !== id))
+    } catch (e: any) {
+      alert(e?.response?.data?.message || e?.message || 'Reject failed')
+    }
+  }
+
+  // Simple inspector stats derived from list; you can replace with a real endpoint later
+  const stats = {
+    assigned: rows.length,
+    completedToday: '—',
+    averageTime: '—',
+    accuracyRate: '—',
+  }
 
   return (
     <div className="space-y-8">
-      {/* Inspector Header */}
+      {/* Header */}
       <div className="bg-gradient-hero rounded-lg p-6 text-white">
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold mb-2">Inspector Dashboard</h1>
-            <p className="text-white/90 text-lg">
-              Review and verify pending identity documents
-            </p>
+            <p className="text-white/90 text-lg">Review and verify pending identity documents</p>
           </div>
           <Shield className="h-16 w-16 text-white/80" />
         </div>
       </div>
 
-      {/* Inspector Stats */}
+      {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
@@ -167,10 +183,8 @@ export const InspectorDashboard = () => {
             <FileText className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{mockStats.assigned}</div>
-            <p className="text-xs text-muted-foreground">
-              Pending review
-            </p>
+            <div className="text-2xl font-bold">{loading ? '—' : stats.assigned}</div>
+            <p className="text-xs text-muted-foreground">Pending review</p>
           </CardContent>
         </Card>
 
@@ -180,10 +194,8 @@ export const InspectorDashboard = () => {
             <CheckCircle className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-success">8</div>
-            <p className="text-xs text-muted-foreground">
-              Total: {mockStats.completed}
-            </p>
+            <div className="text-2xl font-bold text-success">{stats.completedToday}</div>
+            <p className="text-xs text-muted-foreground">—</p>
           </CardContent>
         </Card>
 
@@ -193,10 +205,10 @@ export const InspectorDashboard = () => {
             <Clock className="h-4 w-4 text-muted-foreground" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">{mockStats.averageTime}</div>
+            <div className="text-2xl font-bold">{stats.averageTime}</div>
             <p className="text-xs text-muted-foreground">
               <TrendingUp className="h-3 w-3 inline mr-1" />
-              15% faster this week
+              —
             </p>
           </CardContent>
         </Card>
@@ -207,10 +219,8 @@ export const InspectorDashboard = () => {
             <Shield className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-success">{mockStats.accuracyRate}%</div>
-            <p className="text-xs text-muted-foreground">
-              Quality score
-            </p>
+            <div className="text-2xl font-bold text-success">{stats.accuracyRate}</div>
+            <p className="text-xs text-muted-foreground">Quality score</p>
           </CardContent>
         </Card>
       </div>
@@ -221,15 +231,13 @@ export const InspectorDashboard = () => {
           <div className="flex items-center justify-between">
             <div>
               <CardTitle>Pending Reviews</CardTitle>
-              <CardDescription>
-                Documents requiring manual inspection and approval
-              </CardDescription>
+              <CardDescription>Documents requiring manual inspection and approval</CardDescription>
             </div>
             <div className="flex gap-2">
               <div className="relative">
                 <Search className="absolute left-3 top-3 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search verifications..."
+                  placeholder="Search verifications…"
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                   className="pl-10 w-64"
@@ -242,88 +250,82 @@ export const InspectorDashboard = () => {
             </div>
           </div>
         </CardHeader>
+
         <CardContent>
-          <Table>
-            <TableHeader>
-              <TableRow>
-                <TableHead>ID</TableHead>
-                <TableHead>Type</TableHead>
-                <TableHead>Country</TableHead>
-                <TableHead>Priority</TableHead>
-                <TableHead>AI Confidence</TableHead>
-                <TableHead>Submitted</TableHead>
-                <TableHead>Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {filteredVerifications.map((verification) => (
-                <TableRow key={verification.id}>
-                  <TableCell className="font-mono">{verification.id}</TableCell>
-                  <TableCell className="capitalize">{verification.type}</TableCell>
-                  <TableCell className="capitalize">{verification.country}</TableCell>
-                  <TableCell>{getPriorityBadge(verification)}</TableCell>
-                  <TableCell>
-                    {verification.aiAnalysis ? (
-                      <span className={`font-semibold ${
-                        verification.aiAnalysis.confidence > 0.9 ? 'text-success' :
-                        verification.aiAnalysis.confidence > 0.7 ? 'text-warning' :
-                        'text-destructive'
-                      }`}>
-                        {Math.round(verification.aiAnalysis.confidence * 100)}%
-                      </span>
-                    ) : (
-                      <span className="text-muted-foreground">Pending</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-sm">
-                    {new Date(verification.createdAt).toLocaleDateString()}
-                  </TableCell>
-                  <TableCell>
-                    <div className="flex gap-2">
-                      <Button variant="outline" size="sm">
-                        <Eye className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="success" 
-                        size="sm"
-                        onClick={() => handleApprove(verification.id)}
-                      >
-                        <CheckCircle className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="destructive" 
-                        size="sm"
-                        onClick={() => handleReject(verification.id)}
-                      >
-                        <XCircle className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
-            </TableBody>
-          </Table>
+          {error ? (
+            <div className="text-destructive">{error}</div>
+          ) : loading ? (
+            <div className="text-muted-foreground py-8">Loading…</div>
+          ) : filtered.length === 0 ? (
+            <div className="text-muted-foreground py-8">No pending requests found.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead className="text-left">
+                  <tr className="border-b">
+                    <th className="py-2 pr-4">ID</th>
+                    <th className="py-2 pr-4">Type</th>
+                    <th className="py-2 pr-4">Country</th>
+                    <th className="py-2 pr-4">AI Confidence</th>
+                    <th className="py-2 pr-4">Submitted</th>
+                    <th className="py-2 pr-4">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {filtered.map((v) => (
+                    <tr key={v.id} className="border-b">
+                      <td className="py-2 pr-4 font-mono">{v.id}</td>
+                      <td className="py-2 pr-4 capitalize">{v.type}</td>
+                      <td className="py-2 pr-4 capitalize">{v.country}</td>
+                      <td className="py-2 pr-4">
+                        {typeof v.aiConfidence === 'number' ? (
+                          <span
+                            className={
+                              'font-semibold ' +
+                              (v.aiConfidence > 0.9
+                                ? 'text-success'
+                                : v.aiConfidence > 0.7
+                                ? 'text-warning'
+                                : 'text-destructive')
+                            }
+                          >
+                            {Math.round(v.aiConfidence * 100)}%
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Pending</span>
+                        )}
+                      </td>
+                      <td className="py-2 pr-4">
+                        {new Date(v.createdAt).toLocaleDateString()}
+                      </td>
+                      <td className="py-2 pr-4">
+                        <div className="flex gap-2">
+                          <Button variant="outline" size="sm" title="View">
+                            <Eye className="h-4 w-4" />
+                          </Button>
+                          <Button size="sm" onClick={() => handleApprove(v.id)} title="Approve">
+                            <CheckCircle className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="destructive"
+                            size="sm"
+                            onClick={() => handleReject(v.id)}
+                            title="Reject"
+                          >
+                            <XCircle className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </CardContent>
       </Card>
 
-      {/* High Priority Cases */}
-      <div className="space-y-4">
-        <h2 className="text-2xl font-bold flex items-center gap-2">
-          <AlertTriangle className="h-6 w-6 text-destructive" />
-          High Priority Cases
-        </h2>
-        <div className="grid gap-6">
-          {pendingVerifications
-            .filter(v => v.documents[0]?.fraudCheck?.isSuspicious)
-            .map((verification) => (
-              <VerificationStatusCard
-                key={verification.id}
-                verification={verification}
-                showDetails={false}
-              />
-            ))}
-        </div>
-      </div>
+     
     </div>
-  );
-};
+  )
+}

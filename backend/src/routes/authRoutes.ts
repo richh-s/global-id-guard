@@ -1,5 +1,5 @@
 import { Router } from 'express'
-import { signupController, loginController } from '../controllers/authController'
+import { signupController, loginController, meController } from '../controllers/authController'
 import { authMiddleware } from '../middlewares/authMiddleware'
 
 const router = Router()
@@ -13,5 +13,6 @@ router.get('/user', authMiddleware, (req, res) => {
   const user = req.user!
   res.json({ id: user.userId, role: user.role })
 })
+router.get('/me', authMiddleware, meController);
 
 export default router

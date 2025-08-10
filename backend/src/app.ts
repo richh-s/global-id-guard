@@ -13,6 +13,7 @@ import configRoutes from './routes/configRoutes'
 import { errorMiddleware } from './middlewares/errorMiddleware'
 import documentRoutes from './routes/documentRoutes'
 import { UPLOAD_DIR } from './config/uploads'
+import metricsRoutes from './routes/metricsRoutes'
 
 const app = express()
 
@@ -39,6 +40,7 @@ app.use('/api/fraud-details', fraudDetailsRoutes)
 app.use('/api/config', configRoutes)
 app.use('/api/documents', documentRoutes)
 app.use('/files', express.static(UPLOAD_DIR))
+app.use('/api/metrics', metricsRoutes)
 // Global error handler (after routes)
 app.use(errorMiddleware)
 

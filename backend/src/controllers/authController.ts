@@ -1,6 +1,7 @@
 // src/controllers/authController.ts
 import { Request, Response, NextFunction } from "express";
 import { signupService, loginService } from "../services/authService";
+import { query } from "../config/database";
 
 export async function signupController(
   req: Request,
@@ -41,4 +42,15 @@ export async function loginController(
     next(err);
   }
 }
+export async function meController(req: Request, res: Response, next: NextFunction) {
+  try {
+    const u = req.user!;
+    const rows = await query<{ id:number; email:string; role:string; name:string; country:string }>(
+      `SELECT id, email, role, name, country FROM users WHERE id=$1`, [u.userId]
+    );
+    if (!rows.length) return res.status(404).json({ message: 'User not found' });
+    res.json(rows[0]);
+  } catch (e) { next(e); }
+}
+
 

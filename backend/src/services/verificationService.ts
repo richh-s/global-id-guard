@@ -1,3 +1,4 @@
+// src/services/verificationService.ts
 import { query } from '../config/database'
 import { VerificationRequest } from '../models/VerificationRequest'
 
@@ -24,6 +25,7 @@ const ALLOWED_DOCUMENT: DocumentType[] = [
 
 /**
  * User submits a verification: store as 'pending'; do NOT set AI results.
+ * Also writes an audit_logs row with action 'created'.
  */
 export async function submitVerification(
   userId: number,
@@ -74,7 +76,29 @@ export async function submitVerification(
     ]
   )
 
-  return rows[0]
+  const created = rows[0]
+
+  // Write audit log: 'created'
+  // (keep metadata small but useful for admins)
+  await query(
+    `INSERT INTO audit_logs (verification_request_id, actor_user_id, action, metadata)
+     VALUES ($1, $2, 'created', $3)`,
+    [
+      created.id,
+      userId,
+      JSON.stringify({
+        country: country2,
+        verificationType: opts.verificationType,
+        documentType: opts.documentType,
+        file: {
+          name: opts.file?.name ?? null,
+          contentType: opts.file?.contentType ?? null,
+        },
+      }),
+    ]
+  )
+
+  return created
 }
 
 /**

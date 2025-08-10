@@ -1,3 +1,4 @@
+// src/services/verificationRequestsService.ts
 import { query } from '../config/database'
 import { VerificationRequest } from '../models/VerificationRequest'
 
@@ -32,7 +33,26 @@ export async function approveRequest(
     ;(err as any).statusCode = 404
     throw err
   }
-  return rows[0]
+
+  const updated = rows[0]
+
+  // Audit log for approval
+  await query(
+    `INSERT INTO audit_logs (verification_request_id, actor_user_id, action, metadata)
+     VALUES ($1, $2, 'approved', $3)`,
+    [
+      updated.id,
+      inspectorId,
+      JSON.stringify({
+        reason,
+        country: updated.country_code,
+        verificationType: updated.verification_type,
+        documentType: updated.document_type
+      })
+    ]
+  )
+
+  return updated
 }
 
 export async function rejectRequest(
@@ -56,5 +76,24 @@ export async function rejectRequest(
     ;(err as any).statusCode = 404
     throw err
   }
-  return rows[0]
+
+  const updated = rows[0]
+
+  // Audit log for rejection
+  await query(
+    `INSERT INTO audit_logs (verification_request_id, actor_user_id, action, metadata)
+     VALUES ($1, $2, 'rejected', $3)`,
+    [
+      updated.id,
+      inspectorId,
+      JSON.stringify({
+        reason,
+        country: updated.country_code,
+        verificationType: updated.verification_type,
+        documentType: updated.document_type
+      })
+    ]
+  )
+
+  return updated
 }
