@@ -3,20 +3,24 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { VerificationRequest } from '@/types/verification';
-import { 
-  CheckCircle, 
-  Clock, 
-  AlertTriangle, 
-  XCircle, 
+import {
+  CheckCircle,
+  Clock,
+  AlertTriangle,
+  XCircle,
   Shield,
   FileText,
   Eye,
-  Download
+  Download,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 interface VerificationStatusCardProps {
-  verification: VerificationRequest;
+  verification: VerificationRequest & {
+    /** Optional reason fields (we read either if present) */
+    decisionReason?: string | null;
+    rejectionReason?: string | null;
+  };
   showDetails?: boolean;
   onViewDetails?: () => void;
 }
@@ -48,8 +52,8 @@ const getStatusBadge = (status: VerificationRequest['status']) => {
   } as const;
 
   return (
-    <Badge 
-      variant={variants[status]} 
+    <Badge
+      variant={variants[status]}
       className={cn(
         status === 'verified' && 'bg-success hover:bg-success/80',
         status === 'pending' && 'bg-warning text-warning-foreground hover:bg-warning/80',
@@ -63,12 +67,18 @@ const getStatusBadge = (status: VerificationRequest['status']) => {
 
 const getProgressValue = (status: VerificationRequest['status']) => {
   switch (status) {
-    case 'pending': return 25;
-    case 'in_review': return 50;
-    case 'verified': return 100;
-    case 'rejected': return 100;
-    case 'fraud_detected': return 100;
-    default: return 0;
+    case 'pending':
+      return 25;
+    case 'in_review':
+      return 50;
+    case 'verified':
+      return 100;
+    case 'rejected':
+      return 100;
+    case 'fraud_detected':
+      return 100;
+    default:
+      return 0;
   }
 };
 
@@ -81,13 +91,18 @@ export const VerificationStatusCard: React.FC<VerificationStatusCardProps> = ({
   const statusBadge = getStatusBadge(verification.status);
   const progressValue = getProgressValue(verification.status);
 
-  // --- NEW: safe locals / fallbacks ---
-  const docs = verification.documents ?? [];                 // always an array
-  const docCount = docs.length;                              // safe
-  const createdAt =
-    verification.createdAt ? new Date(verification.createdAt) : new Date();
+  // --- Safe fallbacks ---
+  const docs = verification.documents ?? [];
+  const docCount = docs.length;
+  const createdAt = verification.createdAt ? new Date(verification.createdAt) : new Date();
   const countryLabel = verification.country ?? '—';
   const typeLabel = (verification.type ?? 'identity').toString();
+
+  // accept either field name
+  const rejectionReason =
+    (verification as any).decisionReason ??
+    (verification as any).rejectionReason ??
+    null;
 
   return (
     <Card className="hover:shadow-medium transition-all duration-300">
@@ -129,6 +144,19 @@ export const VerificationStatusCard: React.FC<VerificationStatusCardProps> = ({
           </div>
         )}
 
+        {/* Rejection reason (if any) */}
+        {verification.status === 'rejected' && rejectionReason && (
+          <div className="bg-destructive/5 border border-destructive/30 rounded-lg p-3">
+            <div className="flex items-start gap-2 text-sm">
+              <XCircle className="h-4 w-4 text-destructive mt-0.5" />
+              <div>
+                <div className="font-semibold text-destructive">Rejected</div>
+                <div className="text-destructive/90">Reason: {rejectionReason}</div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="flex items-center justify-between text-sm text-muted-foreground">
           <div className="flex items-center gap-1">
             <FileText className="h-4 w-4" />
@@ -149,12 +177,7 @@ export const VerificationStatusCard: React.FC<VerificationStatusCardProps> = ({
         {showDetails && (
           <div className="flex gap-2 pt-2">
             {onViewDetails && (
-              <Button 
-                variant="outline" 
-                size="sm" 
-                onClick={onViewDetails}
-                className="flex-1"
-              >
+              <Button variant="outline" size="sm" onClick={onViewDetails} className="flex-1">
                 <Eye className="h-4 w-4 mr-2" />
                 View Details
               </Button>

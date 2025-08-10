@@ -10,21 +10,18 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import {
   Shield,
   Eye,
   CheckCircle,
   XCircle,
-  Clock,
-  TrendingUp,
   FileText,
   Filter,
   Search,
 } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 
-// ----------------- Axios base + auth header -----------------
+// ---------- Axios base + auth header ----------
 axios.defaults.baseURL = import.meta.env?.VITE_API_BASE || 'http://localhost:4000'
 axios.interceptors.request.use((cfg) => {
   const t = localStorage.getItem('verifyme_token')
@@ -32,14 +29,14 @@ axios.interceptors.request.use((cfg) => {
   return cfg
 })
 
-// ----------------- Backend row + mapping to UI -----------------
+// ---------- Types from backend ----------
 type Row = {
   id: number
   user_id: number
   country_code: 'IN' | 'AU' | 'UK' | string
   status: 'pending' | 'approved' | 'rejected' | string
   ai_status?: 'not_started' | 'queued' | 'running' | 'completed' | null
-  ai_confidence?: number | null // 0..100 when completed
+  ai_confidence?: number | null
   verification_type?: 'identity' | 'address' | 'employment' | 'business' | string
   document_type?: 'passport' | 'driving_license' | 'utility_bill' | 'employment_letter' | string
   file_name?: string | null
@@ -53,9 +50,10 @@ type UiVerification = {
   status: 'pending' | 'in_review' | 'verified' | 'rejected'
   country: 'india' | 'australia' | 'uk'
   createdAt: string
-  aiConfidence?: number // 0..1 (optional)
+  aiConfidence?: number
 }
 
+// ---------- helpers ----------
 function toUiCountry(cc: string | undefined): 'india' | 'australia' | 'uk' {
   switch ((cc || '').toUpperCase()) {
     case 'AU':
@@ -91,7 +89,7 @@ function toUi(row: Row): UiVerification {
   }
 }
 
-// ----------------- Component -----------------
+// ---------- Component ----------
 export const InspectorDashboard = () => {
   const { user } = useAuth()
 
@@ -104,7 +102,8 @@ export const InspectorDashboard = () => {
     setLoading(true)
     setError(null)
     try {
-      const res = await axios.get<Row[]>('/api/verification-requests') // Inspector-only
+      // Inspector-only endpoint (from your Postman run)
+      const res = await axios.get<Row[]>('/api/verification-requests')
       setRows((res.data || []).map(toUi))
     } catch (e: any) {
       setError(e?.response?.data?.message || e?.message || 'Failed to load pending requests.')
@@ -130,10 +129,15 @@ export const InspectorDashboard = () => {
 
   // ---- Approve/Reject handlers ----
   const handleApprove = async (id: string) => {
-    const optionalReason = window.prompt('Approve reason (optional):') || undefined
+    // If your backend accepts approve without a reason, you can remove this prompt.
+    const reason = window.prompt('Enter approval reason (required):') || ''
+    if (!reason.trim()) {
+      alert('Approval reason is required.')
+      return
+    }
     try {
-      await axios.put(`/api/verification-requests/${id}/approve`, { reason: optionalReason })
-      // Remove from list (it’s no longer pending)
+      await axios.put(`/api/verification-requests/${id}/approve`, { reason })
+      // Remove from list (no longer pending)
       setRows((prev) => prev.filter((r) => r.id !== id))
     } catch (e: any) {
       alert(e?.response?.data?.message || e?.message || 'Approve failed')
@@ -154,12 +158,10 @@ export const InspectorDashboard = () => {
     }
   }
 
-  // Simple inspector stats derived from list; you can replace with a real endpoint later
+  // Simple inspector stats derived from list
   const stats = {
     assigned: rows.length,
-    completedToday: '—',
-    averageTime: '—',
-    accuracyRate: '—',
+    completedToday: '—', // keep placeholder unless you add a backend metric
   }
 
   return (
@@ -175,8 +177,8 @@ export const InspectorDashboard = () => {
         </div>
       </div>
 
-      {/* Stats */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+      {/* Stats (removed Avg. Review Time & Accuracy Rate) */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Assigned Cases</CardTitle>
@@ -191,36 +193,10 @@ export const InspectorDashboard = () => {
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">Completed Today</CardTitle>
-            <CheckCircle className="h-4 w-4 text-success" />
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold text-success">{stats.completedToday}</div>
+            <div className="text-2xl font-bold">{stats.completedToday}</div>
             <p className="text-xs text-muted-foreground">—</p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Avg. Review Time</CardTitle>
-            <Clock className="h-4 w-4 text-muted-foreground" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold">{stats.averageTime}</div>
-            <p className="text-xs text-muted-foreground">
-              <TrendingUp className="h-3 w-3 inline mr-1" />
-              —
-            </p>
-          </CardContent>
-        </Card>
-
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm font-medium">Accuracy Rate</CardTitle>
-            <Shield className="h-4 w-4 text-success" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl font-bold text-success">{stats.accuracyRate}</div>
-            <p className="text-xs text-muted-foreground">Quality score</p>
           </CardContent>
         </Card>
       </div>
@@ -324,8 +300,8 @@ export const InspectorDashboard = () => {
           )}
         </CardContent>
       </Card>
-
-     
     </div>
   )
 }
+
+export default InspectorDashboard

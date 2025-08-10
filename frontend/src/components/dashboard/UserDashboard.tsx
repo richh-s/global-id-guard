@@ -42,6 +42,8 @@ type Row = {
   file_storage_path?: string | null
   created_at: string
   updated_at?: string
+  // IMPORTANT: pull reason from API
+  decision_reason?: string | null
 }
 
 function toUiStatus(row: Row): UiVerification['status'] {
@@ -57,7 +59,7 @@ function toUiCountry(cc: string | undefined): 'india' | 'australia' | 'uk' | und
     default: return undefined
   }
 }
-function toUiVerification(row: Row): UiVerification {
+function toUiVerification(row: Row): UiVerification & { decisionReason?: string | null } {
   const docs: UiVerification['documents'] = row.file_name
     ? [{
         id: `${row.id}-0`,
@@ -89,6 +91,8 @@ function toUiVerification(row: Row): UiVerification {
     createdAt: row.created_at,
     updatedAt: row.updated_at || row.created_at,
     country: toUiCountry(row.country_code) || 'india',
+    // pass reason through so we can show it
+    decisionReason: row.decision_reason ?? null,
   }
 }
 
@@ -103,12 +107,23 @@ type DashboardApiResponse = {
   recent?: UiVerification[]
 }
 
+// derive counts from the /api/verify list (single source of truth for user)
+function deriveCounts(rows: Row[]) {
+  let verified = 0, rejected = 0, pending = 0
+  for (const r of rows) {
+    if (r.status === 'approved') verified++
+    else if (r.status === 'rejected') rejected++
+    else pending++
+  }
+  return { total: verified + rejected + pending, verified, rejected, pending }
+}
+
 export const UserDashboard = () => {
   const { user } = useAuth()
 
   const [isLoading, setIsLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [recent, setRecent] = useState<UiVerification[]>([])
+  const [recent, setRecent] = useState<(UiVerification & { decisionReason?: string | null })[]>([])
   const [counts, setCounts] = useState({ total: 0, verified: 0, pending: 0, rejected: 0 })
 
   useEffect(() => {
@@ -125,34 +140,24 @@ export const UserDashboard = () => {
           return
         }
 
-        const [dashRes, verifyRes] = await Promise.all([
-          axios.get<DashboardApiResponse>('/api/dashboard'),
+        // 1) Always fetch the user's list; this drives the cards
+        // 2) Optionally fetch dashboard for recent fallback (if you later enrich the API)
+        const [verifyRes, dashRes] = await Promise.all([
           axios.get<Row[]>('/api/verify'),
+          axios.get<DashboardApiResponse>('/api/dashboard').catch(() => ({ data: {} as DashboardApiResponse })),
         ])
 
         if (cancelled) return
 
-        const d = dashRes.data ?? {}
-        const totals =
-          d.totals ??
-          ({
-            total: d.total ?? 0,
-            verified: d.verified ?? 0,
-            pending: (d.pending ?? d.in_review) ?? 0,
-            rejected: d.rejected ?? 0,
-          } as const)
+        const rows = Array.isArray(verifyRes.data) ? verifyRes.data : []
+        setCounts(deriveCounts(rows))
 
-        setCounts({
-          total: totals.total ?? 0,
-          verified: totals.verified ?? 0,
-          pending: totals.pending ?? 0,
-          rejected: totals.rejected ?? 0,
-        })
+        const fromVerify = rows.map(toUiVerification)
+        const d = dashRes?.data ?? {}
+        const fromDashboard = (d.recentVerifications ?? d.recent ?? []) as (UiVerification & { decisionReason?: string | null })[]
 
-        const fromDashboard = d.recentVerifications ?? d.recent ?? []
-        const fromVerify = Array.isArray(verifyRes.data) ? verifyRes.data.map(toUiVerification) : []
-
-        setRecent(fromDashboard.length ? fromDashboard : fromVerify.slice(0, 5))
+        // Prefer the live list for recents; fall back to API if it ever provides richer data
+        setRecent(fromVerify.slice(0, 5).length ? fromVerify.slice(0, 5) : fromDashboard)
       } catch (e: any) {
         console.error('Dashboard load failed:', e)
         setError(e?.response?.data?.message || e?.message || 'Failed to load your dashboard.')
@@ -172,12 +177,6 @@ export const UserDashboard = () => {
       rejected: counts.rejected,
     }),
     [counts]
-  )
-
-  // NEW: recent "in review" (pending) count for the middle card
-  const recentInReviewCount = useMemo(
-    () => recent.filter(v => v.status === 'in_review' || v.status === 'pending').length,
-    [recent]
   )
 
   return (
@@ -225,7 +224,6 @@ export const UserDashboard = () => {
           </CardContent>
         </Card>
 
-        {/* UPDATED: show recent pending/in-review count instead of global */}
         <Card>
           <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
             <CardTitle className="text-sm font-medium">In Review</CardTitle>
@@ -233,9 +231,9 @@ export const UserDashboard = () => {
           </CardHeader>
           <CardContent>
             <div className="text-2xl font-bold text-warning">
-              {isLoading ? '—' : recentInReviewCount}
+              {isLoading ? '—' : stats.pending}
             </div>
-            <p className="text-xs text-muted-foreground">Recently submitted & awaiting verification</p>
+            <p className="text-xs text-muted-foreground">Awaiting verification</p>
           </CardContent>
         </Card>
 
@@ -255,7 +253,7 @@ export const UserDashboard = () => {
       <Card>
         <CardHeader>
           <CardTitle>Quick Actions</CardTitle>
-        <CardDescription>Start a new verification or manage existing ones</CardDescription>
+          <CardDescription>Start a new verification or manage existing ones</CardDescription>
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -302,11 +300,18 @@ export const UserDashboard = () => {
         ) : recent.length > 0 ? (
           <div className="grid gap-6">
             {recent.map((verification) => (
-              <VerificationStatusCard
-                key={verification.id}
-                verification={verification}
-                showDetails={false} // <-- hide "View Details" button
-              />
+              <div key={verification.id}>
+                <VerificationStatusCard
+                  verification={verification}
+                  showDetails={false}
+                />
+                {/* Show reason inline when rejected */}
+                {verification.status === 'rejected' && verification.decisionReason ? (
+                  <div className="mt-2 text-sm text-destructive">
+                    Reason: {verification.decisionReason}
+                  </div>
+                ) : null}
+              </div>
             ))}
           </div>
         ) : (
