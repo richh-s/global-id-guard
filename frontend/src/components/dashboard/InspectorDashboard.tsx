@@ -369,44 +369,49 @@ export const InspectorDashboard = () => {
       </Card>
 
       {/* Preview Modal */}
-      <Dialog open={previewOpen} onOpenChange={(open) => {
-        if (!open && objectUrl) { URL.revokeObjectURL(objectUrl); setObjectUrl(null) }
-        setPreviewOpen(open)
-      }}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>Document Preview</DialogTitle>
-            <DialogDescription>
-              {previewItem?.fileName || 'Uploaded document'}
-            </DialogDescription>
-          </DialogHeader>
+  {/* Preview Modal (scrollable) */}
+<Dialog open={previewOpen} onOpenChange={(open) => {
+  if (!open && objectUrl) { URL.revokeObjectURL(objectUrl); setObjectUrl(null) }
+  setPreviewOpen(open)
+}}>
+  <DialogContent className="max-w-3xl max-h-[85vh] overflow-hidden">
+    <DialogHeader>
+      <DialogTitle>Document Preview</DialogTitle>
+      <DialogDescription>
+        {previewItem?.fileName || 'Uploaded document'}
+      </DialogDescription>
+    </DialogHeader>
 
-          {(objectUrl || previewItem?.previewUrl) ? (
-            previewItem?.fileType?.startsWith('image/') ? (
-              <img
-                src={objectUrl || previewItem!.previewUrl!}
-                alt={previewItem?.fileName || 'document'}
-                className="w-full h-auto rounded-md"
-              />
-            ) : previewItem?.fileType === 'application/pdf' ? (
-              <iframe
-                src={objectUrl || previewItem!.previewUrl!}
-                title="PDF preview"
-                className="w-full h-[70vh] rounded-md"
-              />
-            ) : (
-              <div className="text-sm">
-                Preview not supported for this file type.{' '}
-                <a className="underline" href={objectUrl || previewItem!.previewUrl!} target="_blank" rel="noreferrer">
-                  Download
-                </a>
-              </div>
-            )
-          ) : (
-            <div className="text-muted-foreground text-sm">No preview available.</div>
-          )}
-        </DialogContent>
-      </Dialog>
+    {/* Scrollable viewport */}
+    <div className="relative max-h-[70vh] overflow-auto rounded-md border bg-muted/20 p-2">
+      {(objectUrl || previewItem?.previewUrl) ? (
+        previewItem?.fileType?.startsWith('image/') ? (
+          <img
+            src={objectUrl || previewItem!.previewUrl!}
+            alt={previewItem?.fileName || 'document'}
+            className="max-w-full h-auto block"
+          />
+        ) : previewItem?.fileType === 'application/pdf' ? (
+          <iframe
+            src={objectUrl || previewItem!.previewUrl!}
+            title="PDF preview"
+            className="w-full h-[70vh] rounded-md"
+          />
+        ) : (
+          <div className="text-sm">
+            Preview not supported for this file type.{' '}
+            <a className="underline" href={objectUrl || previewItem!.previewUrl!} target="_blank" rel="noreferrer">
+              Download
+            </a>
+          </div>
+        )
+      ) : (
+        <div className="text-muted-foreground text-sm">No preview available.</div>
+      )}
+    </div>
+  </DialogContent>
+</Dialog>
+
 
       {/* Decision Modal */}
       <Dialog open={decisionOpen} onOpenChange={setDecisionOpen}>
